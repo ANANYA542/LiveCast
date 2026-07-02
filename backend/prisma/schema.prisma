@@ -1,0 +1,81 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String        @id @default(uuid())
+  displayName  String
+  email        String?       @unique
+  passwordHash String?
+  createdAt    String        // ISO string
+  streams      Stream[]      @relation("UserStreams")
+  chatMessages ChatMessage[] @relation("UserChatMessages")
+  followers    Follow[]      @relation("UserFollowers")
+  following    Follow[]      @relation("UserFollowing")
+}
+
+model Category {
+  id      String   @id @default(uuid())
+  name    String   @unique
+  slug    String   @unique
+  streams Stream[]
+}
+
+model Stream {
+  id                String            @id @default(uuid())
+  creatorId         String
+  creator           User              @relation("UserStreams", fields: [creatorId], references: [id])
+  title             String
+  description       String?
+  status            String            // "LIVE" | "ENDED"
+  livekitRoomName   String            @unique
+  peakViewerCount   Int               @default(0)
+  startedAt         String            // ISO string
+  endedAt           String?           // ISO string
+  chatMessages      ChatMessage[]     @relation("StreamChatMessages")
+  highlight         StreamHighlight?
+  
+  // Category relationship
+  categoryId        String?
+  category          Category?          @relation(fields: [categoryId], references: [id])
+}
+
+model ChatMessage {
+  id              String   @id @default(uuid())
+  streamId        String
+  stream          Stream   @relation("StreamChatMessages", fields: [streamId], references: [id])
+  userId          String
+  user            User     @relation("UserChatMessages", fields: [userId], references: [id])
+  content         String
+  clientMessageId String   @unique // Idempotency key from client
+  isOfflineSync   Boolean  @default(false)
+  clientTimestamp String   // ISO string for UI ordering
+  serverTimestamp String   // ISO string set on server receipt
+}
+
+model Follow {
+  id          String @id @default(uuid())
+  followerId  String
+  follower    User   @relation("UserFollowers", fields: [followerId], references: [id])
+  followingId String
+  following   User   @relation("UserFollowing", fields: [followingId], references: [id])
+
+  @@unique([followerId, followingId])
+  @@map("follows")
+}
+
+model StreamHighlight {
+  id              String @id @default(uuid())
+  streamId        String @unique
+  stream          Stream @relation(fields: [streamId], references: [id])
+  summary         String
+  peakViewers     Int
+  totalMessages   Int
+  durationSeconds Float
+  createdAt       String // ISO string
+}
