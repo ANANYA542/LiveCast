@@ -1,0 +1,34 @@
+{
+  "name": "buildai-mobile",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "ts:check": "tsc"
+  },
+  "dependencies": {
+    "@livekit/react-native": "^2.3.0",
+    "@livekit/react-native-expo-plugin": "^1.0.1",
+    "@livekit/react-native-webrtc": "*",
+    "@react-native-community/netinfo": "11.3.1",
+    "@types/text-encoding": "^0.0.40",
+    "axios": "^1.6.8",
+    "expo": "~51.0.0",
+    "expo-status-bar": "~1.12.1",
+    "livekit-client": "^2.2.0",
+    "react": "18.2.0",
+    "react-native": "0.74.5",
+    "react-native-mmkv": "^2.12.2",
+    "react-native-uuid": "^2.0.2",
+    "socket.io-client": "^4.7.5",
+    "text-encoding": "^0.7.0",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.20.0",
+    "@types/react": "~18.2.45",
+    "typescript": "~5.3.3"
+  },
+  "private": true
+}
