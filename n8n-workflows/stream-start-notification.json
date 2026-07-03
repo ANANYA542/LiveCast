@@ -1,0 +1,146 @@
+{
+  "name": "Stream Starts -> Notify Followers",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stream-started",
+        "options": {}
+      },
+      "id": "1c5bf08d-56d1-419b-a010-8bfa0c04abde",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT u.email, u.\"displayName\" FROM \"follows\" f JOIN \"User\" u ON f.\"followerId\" = u.id WHERE f.\"followingId\" = '{{ $json.body.creatorId }}';"
+      },
+      "id": "b3e34bcf-f7a1-4351-998f-ea81ef40d4f2",
+      "name": "Get Followers from Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-db-credentials",
+          "name": "Postgres Database Connection"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {}
+      },
+      "id": "dcf348fb-e24e-4c74-aa1e-53c829ee1dcd",
+      "name": "Split In Batches (50)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://httpbin.org/post",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"to\": \"{{ $json.email }}\",\n  \"title\": \"Live Stream Notification\",\n  \"body\": \"{{ $('Webhook Trigger').item.json.body.title }} is now LIVE!\"\n}",
+        "options": {}
+      },
+      "id": "f5e93dfb-4029-4d6b-944a-9ef8540d9991",
+      "name": "Simulate Expo Push Send",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        760,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "notice": "All notifications sent successfully for the current batch."
+      },
+      "id": "a93bebf2-e95b-4395-8854-e0b5220c4c4e",
+      "name": "No Operation / Log",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        980,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Followers from Postgres",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Followers from Postgres": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches (50)",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches (50)": {
+      "main": [
+        [
+          {
+            "node": "Simulate Expo Push Send",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation / Log",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate Expo Push Send": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches (50)",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "versionId": "stream-start-workflow-v1",
+  "id": "stream-start-notification"
+}

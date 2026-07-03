@@ -1,0 +1,115 @@
+{
+  "name": "Stream Ends -> Generate Highlights",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stream-ended",
+        "options": {}
+      },
+      "id": "e67e8a9f-f77d-41a4-9270-22c608f58be7",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \"serverTimestamp\" FROM \"ChatMessage\" WHERE \"streamId\" = '{{ $json.body.streamId }}' ORDER BY \"serverTimestamp\" ASC;"
+      },
+      "id": "936bf8cf-89ae-44d4-81d5-bc440939d891",
+      "name": "Fetch Stream Messages",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [320, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-db-credentials",
+          "name": "Postgres Database Connection"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const messages = $input.all();\nconst webhookNode = $('Webhook Trigger');\nconst webhookData = webhookNode.first()?.json?.body || {};\nconst streamStartMs = webhookData.streamStartedAt ? new Date(webhookData.streamStartedAt).getTime() : Date.now();\n\n// === EMPTY CHAT GUARD ===\nif (messages.length === 0) {\n  return [{\n    json: {\n      streamId: webhookData.streamId || 'no-stream-id',\n      hasHighlight: false,\n      startTimeOffset: 0,\n      endTimeOffset: 0,\n      peakCount: 0,\n      totalCount: 0,\n      summary: 'No chat activity recorded during the broadcast.'\n    }\n  }];\n}\n\n// === SLIDING WINDOW APPROACH (±15s around each message) ===\n// For every message, count how many other messages fall within ±15 seconds.\n// This avoids the epoch-aligned bucket-boundary splitting problem where\n// a real spike straddling a 30s boundary gets artificially halved.\n\nconst timestamps = messages.map(m => new Date(m.json.serverTimestamp).getTime());\nconst WINDOW_HALF = 15000; // 15 seconds on each side = 30s total window\n\nlet maxCount = 0;\nlet peakCenterIdx = 0;\n\nfor (let i = 0; i < timestamps.length; i++) {\n  const center = timestamps[i];\n  let count = 0;\n  for (let j = 0; j < timestamps.length; j++) {\n    if (Math.abs(timestamps[j] - center) <= WINDOW_HALF) {\n      count++;\n    }\n  }\n  if (count > maxCount) {\n    maxCount = count;\n    peakCenterIdx = i;\n  }\n}\n\nconst peakCenterMs = timestamps[peakCenterIdx];\nconst startTimeOffset = Math.max(0, Math.floor((peakCenterMs - WINDOW_HALF - streamStartMs) / 1000));\nconst endTimeOffset = Math.floor((peakCenterMs + WINDOW_HALF - streamStartMs) / 1000);\n\nreturn [{\n  json: {\n    streamId: webhookData.streamId || 'no-stream-id',\n    hasHighlight: true,\n    startTimeOffset,\n    endTimeOffset,\n    peakCount: maxCount,\n    totalCount: messages.length,\n    summary: `Peak chat activity: ${maxCount} messages in 30s window at ${startTimeOffset}s-${endTimeOffset}s into the stream. Total chat volume: ${messages.length} messages.`\n  }\n}];"
+      },
+      "id": "495af4cf-4aa1-4c74-aa1e-53c829ee1dcd",
+      "name": "Sliding Window Peak Analytics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.hasHighlight }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "guard-if-node-01",
+      "name": "Has Highlight?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO \"StreamHighlight\" (id, \"streamId\", summary, \"peakViewers\", \"totalMessages\", \"durationSeconds\", \"createdAt\") VALUES (gen_random_uuid(), '{{ $json.streamId }}', '{{ $json.summary }}', {{ $('Webhook Trigger').first()?.json?.body?.peakViewers || 0 }}, {{ $json.totalCount }}, {{ $('Webhook Trigger').first()?.json?.body?.durationSeconds || 0 }}, '{{ new Date().toISOString() }}') ON CONFLICT (\"streamId\") DO UPDATE SET summary = EXCLUDED.summary, \"totalMessages\" = EXCLUDED.\"totalMessages\", \"durationSeconds\" = EXCLUDED.\"durationSeconds\";"
+      },
+      "id": "a93bebf2-e95b-4395-8854-e0b5220c4c4e",
+      "name": "Persist Highlight in Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1000, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-db-credentials",
+          "name": "Postgres Database Connection"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "notice": "No chat activity during stream — skipping highlight generation."
+      },
+      "id": "noop-skip-node-01",
+      "name": "Skip (No Chat)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1000, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [{ "node": "Fetch Stream Messages", "index": 0 }]
+      ]
+    },
+    "Fetch Stream Messages": {
+      "main": [
+        [{ "node": "Sliding Window Peak Analytics", "index": 0 }]
+      ]
+    },
+    "Sliding Window Peak Analytics": {
+      "main": [
+        [{ "node": "Has Highlight?", "index": 0 }]
+      ]
+    },
+    "Has Highlight?": {
+      "main": [
+        [{ "node": "Persist Highlight in Postgres", "index": 0 }],
+        [{ "node": "Skip (No Chat)", "index": 0 }]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "versionId": "highlights-workflow-v2",
+  "id": "stream-end-highlights"
+}

@@ -1,0 +1,174 @@
+{
+  "name": "Viewer Milestone -> Alert Creator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "viewer-milestone",
+        "options": {}
+      },
+      "id": "e67e8a9f-f77d-41a4-9270-22c608f58be7",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT email, \"displayName\" FROM \"User\" WHERE id = '{{ $json.body.creatorId }}';"
+      },
+      "id": "936bf8cf-89ae-44d4-81d5-bc440939d891",
+      "name": "Get Creator Details",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-db-credentials",
+          "name": "Postgres Database Connection"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "number",
+        "value1": "={{ $('Webhook Trigger').item.json.body.milestone }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": 3
+            },
+            {
+              "value2": 100
+            },
+            {
+              "value2": 500
+            },
+            {
+              "value2": 1000
+            }
+          ]
+        },
+        "fallbackOutput": 1
+      },
+      "id": "495af4cf-4aa1-4c74-aa1e-53c829ee1dcd",
+      "name": "Switch on Milestone",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "message",
+              "value": "Your stream has just hit the milestone of {{ $('Webhook Trigger').item.json.body.milestone }} concurrent viewers! Keep up the good work! 🎉"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "76ba3dfb-4029-4d6b-944a-9ef8540d9991",
+      "name": "Format Alert Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://httpbin.org/post",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"to\": \"{{ $json.email }}\",\n  \"alertType\": \"milestone\",\n  \"message\": \"{{ $json.message }}\"\n}",
+        "options": {}
+      },
+      "id": "a93bebf2-e95b-4395-8854-e0b5220c4c4e",
+      "name": "Simulate Alert Delivery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1000,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Creator Details",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Creator Details": {
+      "main": [
+        [
+          {
+            "node": "Switch on Milestone",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch on Milestone": {
+      "main": [
+        [
+          {
+            "node": "Format Alert Message",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Alert Message",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Alert Message",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Alert Message",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Alert Message": {
+      "main": [
+        [
+          {
+            "node": "Simulate Alert Delivery",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "versionId": "milestone-workflow-v1",
+  "id": "viewer-milestone-alert"
+}
