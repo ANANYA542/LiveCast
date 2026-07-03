@@ -5,7 +5,10 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "viewer-milestone",
-        "options": {}
+        "options": {
+          "responseData": "message",
+          "responseMsg": "Workflow started successfully"
+        }
       },
       "id": "e67e8a9f-f77d-41a4-9270-22c608f58be7",
       "name": "Webhook Trigger",

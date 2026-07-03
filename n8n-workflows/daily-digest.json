@@ -43,41 +43,11 @@
     },
     {
       "parameters": {
-        "operation": "aggregate",
-        "fieldsToAggregate": {
-          "fieldToAggregate": [
-            {
-              "field": "title",
-              "rename": "streamTitle"
-            },
-            {
-              "field": "peakViewerCount",
-              "rename": "peakViewers"
-            },
-            {
-              "field": "creator",
-              "rename": "creatorName"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "495af4cf-4aa1-4c74-aa1e-53c829ee1dcd",
-      "name": "Compile Top List",
-      "type": "n8n-nodes-base.aggregate",
-      "typeVersion": 1,
-      "position": [
-        540,
-        300
-      ]
-    },
-    {
-      "parameters": {
         "method": "POST",
         "url": "https://httpbin.org/post",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"digestDate\": \"{{ new Date().toDateString() }}\",\n  \"topStreamsCount\": \"{{ $json.length }}\",\n  \"streamsList\": \"{{ $input.all() }}\"\n}",
+        "jsonBody": "{\n  \"digestDate\": \"{{ new Date().toDateString() }}\",\n  \"topStreamsCount\": \"{{ $input.all().length }}\",\n  \"streamsList\": \"{{ $input.all() }}\"\n}",
         "options": {}
       },
       "id": "a93bebf2-e95b-4395-8854-e0b5220c4c4e",
@@ -85,7 +55,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
-        780,
+        540,
         300
       ]
     }
@@ -105,16 +75,6 @@
       "main": [
         [
           {
-            "node": "Compile Top List",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Compile Top List": {
-      "main": [
-        [
-          {
             "node": "Publish Daily Report",
             "index": 0
           }
@@ -124,6 +84,6 @@
   },
   "active": true,
   "settings": {},
-  "versionId": "digest-workflow-v1",
+  "versionId": "digest-workflow-v2",
   "id": "daily-digest"
 }

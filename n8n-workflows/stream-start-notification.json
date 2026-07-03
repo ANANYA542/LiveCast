@@ -5,7 +5,10 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "stream-started",
-        "options": {}
+        "options": {
+          "responseData": "message",
+          "responseMsg": "Workflow started successfully"
+        }
       },
       "id": "1c5bf08d-56d1-419b-a010-8bfa0c04abde",
       "name": "Webhook Trigger",
