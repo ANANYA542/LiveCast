@@ -1,6 +1,7 @@
 import { Server, Socket } from "socket.io";
 import { redis, prisma } from "../config/db";
 import { ChatService } from "../services/chatService";
+import { n8nTriggers } from "../utils/n8n";
 
 interface ChatMessagePayload {
   streamId: string;
@@ -39,6 +40,39 @@ export function registerChatHandlers(io: Server, socket: Socket) {
       const currentPeak = peakRaw ? parseInt(peakRaw, 10) : 0;
       if (count > currentPeak) {
         await redis.set(peakKey, count);
+      }
+
+      // n8n Viewer Milestones Check with local developer test value (3)
+      if (stream) {
+        const milestones = [1000, 500, 100, 50, 3];
+        for (const m of milestones) {
+          if (count >= m) {
+            const flagKey = `stream:${streamId}:milestone_${m}_sent`;
+            const alreadySent = await redis.get(flagKey);
+
+            if (!alreadySent) {
+              await redis.set(flagKey, "true", "EX", 86400); // 24hrs cache
+              n8nTriggers.viewerMilestone({
+                streamId,
+                creatorId: stream.creatorId,
+                milestone: m,
+                currentCount: count,
+              });
+
+              // Create creator notification for this viewer milestone
+              await prisma.notification.create({
+                data: {
+                  userId: stream.creatorId,
+                  type: "viewer_milestone",
+                  title: `🏆 You hit ${m} viewers — the crowd is loving it! 🎉`,
+                  message: `Milestone crossed at ${count} current viewers.`,
+                  createdAt: new Date().toISOString(),
+                },
+              });
+            }
+            break; // Check only the highest milestone matched
+          }
+        }
       }
 
       // Broadcast updated count instantly
@@ -118,6 +152,22 @@ export function registerChatHandlers(io: Server, socket: Socket) {
     }
 
     try {
+      // 3.5 Check stream status
+      const stream = await prisma.stream.findUnique({
+        where: { id: streamId },
+        select: { status: true },
+      });
+
+      if (!stream || stream.status === "ENDED") {
+        console.warn(`[Socket.IO]: Chat blocked on ended stream ${streamId} for user ${user.displayName}`);
+        socket.emit("chat:error", {
+          reason: "stream_ended",
+          message: "Cannot send messages to an ended stream.",
+          clientMessageId,
+        });
+        return;
+      }
+
       // 4. Redis Rate Limiter: 5 messages/second per user
       const rateLimitKey = `rate_limit:${streamId}:${user.id}`;
       const count = await redis.incr(rateLimitKey);

@@ -1,5 +1,6 @@
 import { prisma, redis } from "../config/db";
 import { LiveKitService } from "./livekitService";
+import { n8nTriggers } from "../utils/n8n";
 
 export interface StreamResponse {
   id: string;
@@ -113,6 +114,13 @@ export const StreamService = {
       true
     );
 
+    // Fire stream-started webhook to n8n asynchronously (fire-and-forget)
+    n8nTriggers.streamStarted({
+      streamId: updatedStream.id,
+      creatorId: updatedStream.creatorId,
+      title: updatedStream.title,
+    });
+
     return { stream: updatedStream, token };
   },
 
@@ -156,9 +164,25 @@ export const StreamService = {
     // Delete the LiveKit room (disconnects all remaining participants)
     await LiveKitService.deleteRoom(stream.livekitRoomName);
 
-    // Clean up Redis keys: viewer Set + peak counter
+    // Clean up Redis keys: viewer Set + peak counter + milestone flags
     await redis.del(viewerSetKey(streamId));
     await redis.del(peakViewersKey(streamId));
+    const milestoneFlags = [3, 50, 100, 500, 1000];
+    for (const m of milestoneFlags) {
+      await redis.del(`stream:${streamId}:milestone_${m}_sent`);
+    }
+
+    // Fire stream-ended webhook to n8n asynchronously (fire-and-forget)
+    const durationSeconds = Math.floor(
+      (new Date(updatedStream.endedAt!).getTime() - new Date(updatedStream.startedAt).getTime()) / 1000
+    );
+    n8nTriggers.streamEnded({
+      streamId: updatedStream.id,
+      creatorId: updatedStream.creatorId,
+      peakViewers: updatedStream.peakViewerCount,
+      durationSeconds,
+      streamStartedAt: updatedStream.startedAt,
+    });
 
     return updatedStream;
   },

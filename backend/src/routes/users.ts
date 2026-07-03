@@ -33,6 +33,17 @@ usersRouter.post("/:id/follow", async (req: Request, res: Response) => {
       },
     });
 
+    // Generate follower notification for the target creator
+    await prisma.notification.create({
+      data: {
+        userId: targetId,
+        type: "new_follower",
+        title: `👋 ${user.displayName} started following you`,
+        message: "Say hello and welcome them to your channel!",
+        createdAt: new Date().toISOString(),
+      },
+    });
+
     res.status(200).json({ message: "Successfully followed creator.", follow });
   } catch (error: any) {
     console.error("[Follow Error]:", error);
