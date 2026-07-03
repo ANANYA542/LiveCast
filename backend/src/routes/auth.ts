@@ -19,11 +19,17 @@ authRouter.post("/register", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "Email is required." });
   }
 
+  const cleanEmail = email.trim().toLowerCase();
+
+  // Basic email regex format validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(cleanEmail)) {
+    return res.status(400).json({ error: "Invalid email format." });
+  }
+
   if (!password || typeof password !== "string" || password.length < 6) {
     return res.status(400).json({ error: "Password must be at least 6 characters." });
   }
-
-  const cleanEmail = email.trim().toLowerCase();
 
   try {
     // Check if email already in use
@@ -32,7 +38,7 @@ authRouter.post("/register", async (req: Request, res: Response) => {
     });
 
     if (existing) {
-      return res.status(400).json({ error: "This email is already registered." });
+      return res.status(409).json({ error: "This email is already registered." });
     }
 
     const passwordHash = hashPassword(password);
@@ -85,12 +91,12 @@ authRouter.post("/login", async (req: Request, res: Response) => {
     });
 
     if (!user || !user.passwordHash) {
-      return res.status(400).json({ error: "Invalid email or password." });
+      return res.status(401).json({ error: "Invalid credentials." });
     }
 
     const isValid = verifyPassword(password, user.passwordHash);
     if (!isValid) {
-      return res.status(400).json({ error: "Invalid email or password." });
+      return res.status(401).json({ error: "Invalid credentials." });
     }
 
     res.status(200).json({

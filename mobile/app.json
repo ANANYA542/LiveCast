@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "BuildAI Stream",
+    "slug": "buildai-stream",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#121214"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ananya.buildaistream",
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app requires camera access to broadcast your live video streams.",
+        "NSMicrophoneUsageDescription": "This app requires microphone access to broadcast your live audio."
+      }
+    },
+    "android": {
+      "minSdkVersion": 24,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#121214"
+      },
+      "package": "com.ananya.buildaistream",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_CONNECT"
+      ]
+    },
+    "plugins": [
+      "@livekit/react-native-expo-plugin"
+    ]
+  }
+}
