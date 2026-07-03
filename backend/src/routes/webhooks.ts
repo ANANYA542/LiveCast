@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { WebhookReceiver } from "livekit-server-sdk";
 import { prisma, redis } from "../config/db";
 import { broadcastViewerCount } from "../socket";
+import { n8nTriggers } from "../utils/n8n";
 
 export const webhooksRouter = Router();
 
@@ -71,6 +72,37 @@ webhooksRouter.post("/livekit", async (req: Request, res: Response) => {
       const currentPeak = peakRaw ? parseInt(peakRaw, 10) : 0;
       if (count > currentPeak) {
         await redis.set(peakViewersKey(streamId), count);
+      }
+
+      // n8n Viewer Milestones Check with local developer test value (3)
+      const milestones = [1000, 500, 100, 50, 3];
+      for (const m of milestones) {
+        if (count >= m) {
+          const flagKey = `stream:${streamId}:milestone_${m}_sent`;
+          const alreadySent = await redis.get(flagKey);
+
+          if (!alreadySent) {
+            await redis.set(flagKey, "true", "EX", 86400); // 24hrs cache
+            n8nTriggers.viewerMilestone({
+              streamId,
+              creatorId: stream.creatorId,
+              milestone: m,
+              currentCount: count,
+            });
+
+            // Create creator notification for this viewer milestone
+            await prisma.notification.create({
+              data: {
+                userId: stream.creatorId,
+                type: "viewer_milestone",
+                title: `🏆 You hit ${m} viewers — the crowd is loving it! 🎉`,
+                message: `Milestone crossed at ${count} current viewers.`,
+                createdAt: new Date().toISOString(),
+              },
+            });
+          }
+          break; // Check only the highest milestone matched
+        }
       }
 
       console.log(`[LiveKit Webhook]: +joined ${roomName} (${participantId}). Viewers: ${count}`);
