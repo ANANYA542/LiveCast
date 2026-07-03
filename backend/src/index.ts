@@ -8,6 +8,8 @@ import { streamsRouter } from "./routes/streams";
 import { chatRouter } from "./routes/chat";
 import { usersRouter } from "./routes/users";
 import { authRouter } from "./routes/auth";
+import { notificationsRouter } from "./routes/notifications";
+import { automationsRouter } from "./routes/automations";
 import { identityMiddleware } from "./middleware/identity";
 import { initSocket } from "./socket";
 import { prisma, redis } from "./config/db";
@@ -56,6 +58,8 @@ app.use(identityMiddleware);
 app.use("/api/streams", streamsRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/notifications", notificationsRouter);
+app.use("/api/automations", automationsRouter);
 
 server.listen(port, () => {
   console.log(`[server]: Server is running at http://localhost:${port}`);
