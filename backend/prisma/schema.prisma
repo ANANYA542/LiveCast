@@ -32,17 +32,46 @@ model Stream {
   creator           User              @relation("UserStreams", fields: [creatorId], references: [id])
   title             String
   description       String?
-  status            String            // "LIVE" | "ENDED"
+  status            String            // "SCHEDULED" | "LIVE" | "ENDED"
   livekitRoomName   String            @unique
   peakViewerCount   Int               @default(0)
   startedAt         String            // ISO string
   endedAt           String?           // ISO string
+  scheduledAt       String?           // ISO string for scheduled live
   chatMessages      ChatMessage[]     @relation("StreamChatMessages")
   highlight         StreamHighlight?
   
   // Category relationship
   categoryId        String?
   category          Category?          @relation(fields: [categoryId], references: [id])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String   // "viewer_milestone" | "stream_started" | "ai_digest" | "new_follower" | "follower_milestone" | "digest"
+  title     String
+  message   String?
+  read      Boolean  @default(false)
+  createdAt String   // ISO string
+}
+
+model Reminder {
+  id        String @id @default(uuid())
+  userId    String
+  streamId  String
+
+  @@unique([userId, streamId])
+}
+
+model AutomationWorkflow {
+  id          String  @id @default(uuid())
+  name        String
+  description String
+  type        String  // "Webhook" | "Event" | "Condition" | "Schedule"
+  status      String  // "ACTIVE" | "PAUSED" | "FAILED"
+  lastRun     String  // e.g. "2 min ago"
+  runsToday   Int
 }
 
 model ChatMessage {

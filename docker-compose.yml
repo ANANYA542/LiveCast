@@ -1,23 +1,4 @@
-version: "3.8"
-
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: buildai-postgres
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: buildai
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   redis:
     image: redis:7-alpine
     container_name: buildai-redis
@@ -37,14 +18,14 @@ services:
     environment:
       - N8N_BASIC_AUTH_ACTIVE=false
       - WEBHOOK_URL=http://localhost:5678/
-    volumes:
-      - n8n_data:/home/node/.n8n
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=dpg-d934mbe7r5hc73a53vc0-a.ohio-postgres.render.com
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=live_event_broadcasting_system
+      - DB_POSTGRESDB_USER=live_event_broadcasting_system_user
+      - DB_POSTGRESDB_PASSWORD=hzXc8AtR4HQigVNQ8Nu6UjpjWezJ8e06
+      - DB_POSTGRESDB_SSL=true
+      - DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-
-volumes:
-  postgres_data:
-  n8n_data:
