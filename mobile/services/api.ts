@@ -1,8 +1,37 @@
 import axios from "axios";
 import { IdentityManager } from "./identity";
 
-// Connect to local backend (using adb reverse tcp:3001 tcp:3001 makes this hit the Mac backend)
-export const API_BASE_URL = "http://localhost:3001";
+import { NativeModules, Platform } from "react-native";
+
+// Resolve host IP dynamically from the Metro bundle URL to prevent network connection errors
+const getBaseUrl = () => {
+  const scriptURL = NativeModules.SourceCode?.scriptURL;
+  if (scriptURL) {
+    const matches = scriptURL.match(/^https?:\/\/([^:/]+)/);
+    if (matches && matches[1]) {
+      const ip = matches[1];
+      
+      // Simulators on iOS always have access to 127.0.0.1:3001, which bypasses macOS firewall blocks on external IPs
+      if (Platform.OS === "ios") {
+        return "http://127.0.0.1:3001";
+      }
+      
+      // On Android, we default to loopback (127.0.0.1:3001) for physical devices as well
+      // so that 'adb reverse tcp:3001 tcp:3001' maps correctly and bypasses firewall rules on the external IP.
+      if (Platform.OS === "android") {
+        if (ip === "10.0.2.2") {
+          return "http://10.0.2.2:3001";
+        }
+        return "http://127.0.0.1:3001";
+      }
+      
+      return `http://${ip}:3001`;
+    }
+  }
+  return Platform.OS === "android" ? "http://10.0.2.2:3001" : "http://127.0.0.1:3001";
+};
+
+export const API_BASE_URL = getBaseUrl();
 
 export const api = axios.create({
   baseURL: API_BASE_URL,

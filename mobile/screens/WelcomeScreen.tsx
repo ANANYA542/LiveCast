@@ -57,7 +57,12 @@ export default function WelcomeScreen() {
       }
     } catch (e: any) {
       console.warn("[Auth Submit Error]:", e);
-      const msg = e.response?.data?.error || "Authentication failed. Please verify credentials.";
+      let msg = "Authentication failed. Please verify credentials.";
+      if (e.message === "Network Error") {
+        msg = "Network Error: Cannot connect to the server. Please ensure the Express backend is running and 'adb reverse tcp:3001 tcp:3001' is set up in terminal.";
+      } else if (e.response?.data?.error) {
+        msg = e.response.data.error;
+      }
       setErrorMsg(msg);
     } finally {
       setLoading(false);

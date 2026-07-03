@@ -286,6 +286,10 @@ export default function ViewerLiveScreen({
           connect={true}
           audio={true}
           video={true}
+          options={{
+            adaptiveStream: true,
+            dynacast: true,
+          }}
         >
           <WatcherPanel
             streamId={streamId}

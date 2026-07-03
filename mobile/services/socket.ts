@@ -1,10 +1,9 @@
 import { io, Socket } from "socket.io-client";
 import { Platform } from "react-native";
 
-// In development, reverse tcp mapping forwards localhost:3001 to the phone.
-// We map default dev machine endpoints for both iOS simulator and Android device routing.
-const SOCKET_URL = Platform.OS === "android" ? "http://10.0.2.2:3001" : "http://localhost:3001";
-const DEV_URL = "http://localhost:3001"; // Used with adb reverse mapping on physical devices
+import { API_BASE_URL } from "./api";
+
+const SOCKET_URL = API_BASE_URL;
 
 let socket: Socket | null = null;
 
@@ -19,8 +18,8 @@ export const SocketManager = {
       return socket;
     }
 
-    // Connect to backend port 3001 (which is reversed over ADB for your Vivo phone)
-    socket = io(DEV_URL, {
+    // Connect to backend port 3001 dynamically resolved
+    socket = io(SOCKET_URL, {
       auth: {
         userId,
         displayName,

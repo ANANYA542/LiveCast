@@ -311,6 +311,9 @@ export default function CreatorScreen({ onGoBack }: { onGoBack: () => void }) {
   const [streamId, setStreamId] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [url, setUrl] = useState<string | null>(null);
+  const [privacy, setPrivacy] = useState<"public" | "followers_only">("public");
+  const [tags, setTags] = useState("");
+
 
   // Load categories from database on mount
   useEffect(() => {
@@ -419,6 +422,19 @@ export default function CreatorScreen({ onGoBack }: { onGoBack: () => void }) {
           connect={true}
           audio={true}
           video={true}
+          options={{
+            publishDefaults: {
+              simulcast: false,
+              videoCodec: "vp8",
+            },
+            videoCaptureDefaults: {
+              resolution: {
+                width: 640,
+                height: 360,
+                frameRate: 24,
+              }
+            }
+          }}
         >
           <BroadcastViewer onEnd={handleEndStream} streamId={streamId} />
         </LiveKitRoom>
@@ -426,28 +442,55 @@ export default function CreatorScreen({ onGoBack }: { onGoBack: () => void }) {
     );
   }
 
+  const getCategoryEmoji = (slug: string) => {
+    switch (slug) {
+      case "music": return "🎵";
+      case "food": return "🍜";
+      case "tech": return "💻";
+      case "wellness": return "🧘";
+      case "art": return "🎨";
+      case "sports": return "⚽";
+      default: return "🎮";
+    }
+  };
+
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
       <SafeAreaView style={styles.setupContainer}>
+        {/* Setup Header */}
         <View style={styles.setupHeader}>
-          <TouchableOpacity style={styles.backButton} onPress={onGoBack}>
-            <Text style={styles.backButtonText}>← Back</Text>
+          <TouchableOpacity style={styles.backButtonCircle} onPress={onGoBack}>
+            <Text style={styles.backButtonText}>←</Text>
           </TouchableOpacity>
           <Text style={styles.setupTitle}>Go Live Setup</Text>
         </View>
 
-        <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
-          <Text style={styles.label}>Stream Title</Text>
+        <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          
+          {/* Camera Preview Card */}
+          <View style={styles.cameraPreviewCard}>
+            <View style={styles.cameraPreviewCenter}>
+              <Text style={styles.cameraPreviewIcon}>📷</Text>
+              <Text style={styles.cameraPreviewText}>Camera Preview</Text>
+            </View>
+            <TouchableOpacity style={styles.cameraSwapButton}>
+              <Text style={styles.cameraSwapIcon}>🔄</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Title Input */}
+          <Text style={styles.labelUppercase}>STREAM TITLE</Text>
           <TextInput
-            style={styles.input}
-            placeholder="What are we broadcasting today?"
+            style={styles.inputPremium}
+            placeholder="Give your stream a great title..."
             placeholderTextColor={Theme.colors.textMuted}
             value={title}
             onChangeText={setTitle}
             maxLength={60}
           />
 
-          <Text style={styles.label}>Category</Text>
+          {/* Category Input */}
+          <Text style={styles.labelUppercase}>CATEGORY</Text>
           {categoriesLoading ? (
             <ActivityIndicator color={Theme.colors.primary} style={styles.loader} />
           ) : (
@@ -458,18 +501,18 @@ export default function CreatorScreen({ onGoBack }: { onGoBack: () => void }) {
                   <TouchableOpacity
                     key={c.id}
                     style={[
-                      styles.categoryCard,
-                      isSelected && styles.categoryCardSelected,
+                      styles.categoryCardPremium,
+                      isSelected && styles.categoryCardPremiumSelected,
                     ]}
                     onPress={() => setSelectedCategoryId(c.id)}
                   >
                     <Text
                       style={[
-                        styles.categoryCardText,
-                        isSelected && styles.categoryCardTextSelected,
+                        styles.categoryCardPremiumText,
+                        isSelected && styles.categoryCardPremiumTextSelected,
                       ]}
                     >
-                      {c.name}
+                      {getCategoryEmoji(c.slug)} {c.name}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -477,22 +520,64 @@ export default function CreatorScreen({ onGoBack }: { onGoBack: () => void }) {
             </View>
           )}
 
-          <Text style={styles.label}>Description (Optional)</Text>
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            placeholder="Add details about your stream..."
-            placeholderTextColor={Theme.colors.textMuted}
-            value={description}
-            onChangeText={setDescription}
-            multiline={true}
-            numberOfLines={4}
-            maxLength={200}
-          />
+          {/* Privacy Toggle */}
+          <Text style={styles.labelUppercase}>PRIVACY</Text>
+          <View style={styles.privacyRow}>
+            <TouchableOpacity
+              style={[
+                styles.privacyButton,
+                privacy === "public" && styles.privacyButtonSelected,
+              ]}
+              onPress={() => setPrivacy("public")}
+            >
+              <Text
+                style={[
+                  styles.privacyButtonText,
+                  privacy === "public" && styles.privacyButtonTextSelected,
+                ]}
+              >
+                🌐 Public
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.privacyButton,
+                privacy === "followers_only" && styles.privacyButtonSelected,
+              ]}
+              onPress={() => setPrivacy("followers_only")}
+            >
+              <Text
+                style={[
+                  styles.privacyButtonText,
+                  privacy === "followers_only" && styles.privacyButtonTextSelected,
+                ]}
+              >
+                🔒 Followers Only
+              </Text>
+            </TouchableOpacity>
+          </View>
 
+          {/* Tags Section */}
+          <Text style={styles.labelUppercase}>TAGS</Text>
+          <TextInput
+            style={styles.inputPremium}
+            placeholder="# Add tags to reach more viewers..."
+            placeholderTextColor={Theme.colors.textMuted}
+            value={tags}
+            onChangeText={setTags}
+            maxLength={60}
+          />
+          <View style={styles.tagsRow}>
+            <View style={styles.tagPill}><Text style={styles.tagPillText}>#live</Text></View>
+            <View style={styles.tagPill}><Text style={styles.tagPillText}>#music</Text></View>
+            <View style={styles.tagPill}><Text style={styles.tagPillText}>#vibes</Text></View>
+          </View>
+
+          {/* Start Broadcast Button */}
           <TouchableOpacity
             style={[
-              styles.goLiveButton,
-              (!title.trim() || !selectedCategoryId) && styles.disabledButton,
+              styles.goLiveButtonPremium,
+              (!title.trim() || !selectedCategoryId) && styles.disabledButtonPremium,
             ]}
             onPress={handleGoLive}
             disabled={loading || categoriesLoading}
@@ -500,9 +585,10 @@ export default function CreatorScreen({ onGoBack }: { onGoBack: () => void }) {
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.goLiveButtonText}>Start Broadcast 🎥</Text>
+              <Text style={styles.goLiveButtonPremiumText}>● Start Broadcast</Text>
             )}
           </TouchableOpacity>
+
         </ScrollView>
       </SafeAreaView>
     </TouchableWithoutFeedback>
@@ -872,6 +958,165 @@ const styles = StyleSheet.create({
   statusLabelCheck: {
     fontSize: 10,
     color: "#34C759",
+    fontWeight: "bold",
+  },
+  backButtonCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cameraPreviewCard: {
+    height: 180,
+    borderRadius: Theme.roundness.large,
+    backgroundColor: "#3A3834",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 24,
+    position: "relative",
+    overflow: "hidden",
+  },
+  cameraPreviewCenter: {
+    alignItems: "center",
+  },
+  cameraPreviewIcon: {
+    fontSize: 32,
+    color: "#FAF7F2",
+    marginBottom: 8,
+    opacity: 0.8,
+  },
+  cameraPreviewText: {
+    fontSize: 14,
+    color: "#FAF7F2",
+    fontWeight: "600",
+    opacity: 0.7,
+  },
+  cameraSwapButton: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cameraSwapIcon: {
+    fontSize: 16,
+    color: "#FFFFFF",
+  },
+  labelUppercase: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    color: "#8E8A85",
+    marginBottom: 8,
+    marginTop: 20,
+    textTransform: "uppercase",
+  },
+  inputPremium: {
+    height: 52,
+    backgroundColor: "#FFFFFF",
+    borderRadius: Theme.roundness.medium,
+    paddingHorizontal: 16,
+    fontSize: 15,
+    color: Theme.colors.text,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+  },
+  categoryCardPremium: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: "#FFFFFF",
+    marginRight: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+  },
+  categoryCardPremiumSelected: {
+    backgroundColor: "#1F2024",
+    borderColor: "#1F2024",
+  },
+  categoryCardPremiumText: {
+    fontSize: 14,
+    color: Theme.colors.text,
+    fontWeight: "600",
+  },
+  categoryCardPremiumTextSelected: {
+    color: "#FFFFFF",
+  },
+  privacyRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  privacyButton: {
+    flex: 1,
+    height: 50,
+    borderRadius: Theme.roundness.medium,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 4,
+  },
+  privacyButtonSelected: {
+    backgroundColor: "#1F2024",
+    borderColor: "#1F2024",
+  },
+  privacyButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: Theme.colors.text,
+  },
+  privacyButtonTextSelected: {
+    color: "#FFFFFF",
+  },
+  tagsRow: {
+    flexDirection: "row",
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  tagPill: {
+    backgroundColor: "#F2EDE4",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 8,
+  },
+  tagPillText: {
+    fontSize: 12,
+    color: "#8E8A85",
+    fontWeight: "600",
+  },
+  goLiveButtonPremium: {
+    height: 56,
+    backgroundColor: "#EE5D49",
+    borderRadius: Theme.roundness.medium,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 24,
+    marginBottom: 20,
+    shadowColor: "#EE5D49",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  disabledButtonPremium: {
+    opacity: 0.6,
+  },
+  goLiveButtonPremiumText: {
+    color: "#FFFFFF",
+    fontSize: 16,
     fontWeight: "bold",
   },
 });

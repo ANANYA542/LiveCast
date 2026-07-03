@@ -7,7 +7,8 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  FlatList,
+  RefreshControl,
+  Image,
 } from "react-native";
 import { api } from "../services/api";
 import { useAuthStore } from "../stores/authStore";
@@ -19,21 +20,13 @@ interface Category {
   slug: string;
 }
 
-interface Creator {
-  id: string;
-  displayName: string;
-  isFollowing: boolean;
-  followerCount: number;
-  streamCount: number;
-  isLive: boolean;
-}
-
 interface LiveStream {
   id: string;
   title: string;
   description: string | null;
   status: string;
   startedAt: string;
+  scheduledAt?: string | null;
   creator: {
     id: string;
     displayName: string;
@@ -45,6 +38,8 @@ interface LiveStream {
     slug: string;
   } | null;
   currentViewerCount: number;
+  reminderCount?: number;
+  isReminded?: boolean;
 }
 
 export default function BrowseScreen({
@@ -54,12 +49,12 @@ export default function BrowseScreen({
 }) {
   const identity = useAuthStore((state) => state.identity);
   const [streams, setStreams] = useState<LiveStream[]>([]);
+  const [upcoming, setUpcoming] = useState<LiveStream[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [recommended, setRecommended] = useState<Creator[]>([]);
   const [search, setSearch] = useState("");
   const [selectedCategorySlug, setSelectedCategorySlug] = useState<string>("all");
   const [loading, setLoading] = useState(true);
-  const [streamsLoading, setStreamsLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -70,9 +65,18 @@ export default function BrowseScreen({
     await Promise.all([
       fetchCategories(),
       fetchActiveStreams("all"),
-      fetchRecommendedCreators(),
+      fetchUpcomingStreams(),
     ]);
     setLoading(false);
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([
+      fetchActiveStreams(selectedCategorySlug),
+      fetchUpcomingStreams(),
+    ]);
+    setRefreshing(false);
   };
 
   const fetchCategories = async () => {
@@ -85,24 +89,21 @@ export default function BrowseScreen({
   };
 
   const fetchActiveStreams = async (categorySlug: string) => {
-    setStreamsLoading(true);
     try {
       const url = categorySlug === "all" ? "/api/streams" : `/api/streams?category=${categorySlug}`;
       const response = await api.get(url);
       setStreams(response.data);
     } catch (e) {
       console.warn("Failed to load active streams:", e);
-    } finally {
-      setStreamsLoading(false);
     }
   };
 
-  const fetchRecommendedCreators = async () => {
+  const fetchUpcomingStreams = async () => {
     try {
-      const response = await api.get("/api/users/recommended");
-      setRecommended(response.data);
+      const response = await api.get("/api/streams/upcoming");
+      setUpcoming(response.data);
     } catch (e) {
-      console.warn("Failed to load recommended creators:", e);
+      console.warn("Failed to load upcoming streams:", e);
     }
   };
 
@@ -111,29 +112,74 @@ export default function BrowseScreen({
     fetchActiveStreams(categorySlug);
   };
 
-  const handleFollowToggle = async (creatorId: string, currentlyFollowing: boolean) => {
-    // Optimistic UI updates
-    setRecommended((prev) =>
-      prev.map((c) =>
-        c.id === creatorId ? { ...c, isFollowing: !currentlyFollowing } : c
-      )
+  const handleToggleReminder = async (streamId: string) => {
+    // Optimistic toggle
+    setUpcoming((prev) =>
+      prev.map((item) => {
+        if (item.id === streamId) {
+          const wasReminded = item.isReminded ?? false;
+          const currentCount = item.reminderCount ?? 0;
+          return {
+            ...item,
+            isReminded: !wasReminded,
+            reminderCount: wasReminded ? Math.max(0, currentCount - 1) : currentCount + 1,
+          };
+        }
+        return item;
+      })
     );
 
     try {
-      if (currentlyFollowing) {
-        await api.delete(`/api/users/${creatorId}/follow`);
-      } else {
-        await api.post(`/api/users/${creatorId}/follow`);
-      }
+      await api.post(`/api/streams/${streamId}/remind`);
     } catch (e) {
-      console.warn("Failed to toggle follow status:", e);
-      // Revert state on failure
-      setRecommended((prev) =>
-        prev.map((c) =>
-          c.id === creatorId ? { ...c, isFollowing: currentlyFollowing } : c
-        )
-      );
+      console.warn("Failed to toggle reminder:", e);
+      fetchUpcomingStreams();
     }
+  };
+
+  const getCategoryEmoji = (slug: string) => {
+    switch (slug) {
+      case "music": return "🎵";
+      case "food": return "🍜";
+      case "tech": return "💻";
+      case "wellness": return "🧘";
+      case "art": return "🎨";
+      case "sports": return "⚽";
+      default: return "🎮";
+    }
+  };
+
+  const formatStreamDuration = (startedAtIso: string) => {
+    const start = new Date(startedAtIso).getTime();
+    const now = Date.now();
+    const diffMs = now - start;
+    const diffHours = Math.floor(diffMs / (60 * 60 * 1000));
+    const diffMins = Math.floor((diffMs % (60 * 60 * 1000)) / (60 * 1000));
+    
+    if (diffHours > 0) {
+      return `${diffHours}h ${diffMins}m`;
+    }
+    return `${diffMins}m`;
+  };
+
+  const formatScheduledTime = (scheduledAtIso: string) => {
+    const date = new Date(scheduledAtIso);
+    const today = new Date();
+    const tomorrow = new Date();
+    tomorrow.setDate(today.getDate() + 1);
+
+    const timeString = date.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    if (date.toDateString() === today.toDateString()) {
+      return `Tonight ${timeString}`;
+    }
+    if (date.toDateString() === tomorrow.toDateString()) {
+      return `Tomorrow ${timeString}`;
+    }
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ` ${timeString}`;
   };
 
   // Filter streams based on search query locally
@@ -142,229 +188,239 @@ export default function BrowseScreen({
     stream.creator.displayName.toLowerCase().includes(search.toLowerCase())
   );
 
-  // Highlight the stream with the highest viewer count
-  const featuredStream = filteredStreams.reduce<LiveStream | null>(
-    (max, stream) =>
-      !max || stream.currentViewerCount > max.currentViewerCount ? stream : max,
-    null
-  );
+  // The first stream is featured (Live Right Now)
+  const featuredStream = filteredStreams[0] || null;
 
-  // Other trending streams (excluding the featured one)
-  const trendingStreams = filteredStreams.filter(
-    (stream) => stream.id !== featuredStream?.id
-  );
-
-  const getGreeting = () => {
-    const hrs = new Date().getHours();
-    if (hrs < 12) return "Good morning 👋";
-    if (hrs < 18) return "Good afternoon 👋";
-    return "Good evening 👋";
-  };
+  // The next streams are trending (Trending Now)
+  const trendingStreams = filteredStreams.slice(1);
 
   return (
-    <ScrollView 
-      style={styles.container} 
-      contentContainerStyle={styles.contentContainer}
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Top Welcome Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.greetingText}>{getGreeting()}</Text>
-          <Text style={styles.titleText}>Discover</Text>
-        </View>
-        <View style={styles.avatarRow}>
-          <TouchableOpacity style={styles.bellButton}>
-            <Text style={styles.bellIcon}>🔔</Text>
-          </TouchableOpacity>
-          <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>
-              {identity?.displayName ? identity.displayName[0].toUpperCase() : "V"}
-            </Text>
+    <View style={styles.container}>
+      {/* Search Input Bar (Moved inside header container but matching Figma) */}
+      <ScrollView
+        style={styles.scrollContainer}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        }
+      >
+        {/* Header Block */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.greetingLabel}>Good morning,</Text>
+            <Text style={styles.displayName}>{identity?.displayName || "Guest"} 👋</Text>
+          </View>
+          <View style={styles.headerRight}>
+            <TouchableOpacity style={styles.circleHeaderBtn}>
+              <Text style={styles.headerBtnEmoji}>🔍</Text>
+            </TouchableOpacity>
+            <View style={styles.profileAvatarWrapper}>
+              <View style={styles.profileAvatarCircle}>
+                <Text style={styles.profileAvatarText}>
+                  {identity?.displayName ? identity.displayName[0].toUpperCase() : "A"}
+                </Text>
+              </View>
+              <View style={styles.greenStatusDot} />
+            </View>
           </View>
         </View>
-      </View>
 
-      {/* Search Input Bar */}
-      <View style={styles.searchContainer}>
-        <Text style={styles.searchIcon}>🔍</Text>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search streams, creators..."
-          placeholderTextColor={Theme.colors.textMuted}
-          value={search}
-          onChangeText={setSearch}
-        />
-      </View>
+        {/* Search Input */}
+        <View style={styles.searchBar}>
+          <Text style={styles.searchBarIcon}>🔍</Text>
+          <TextInput
+            style={styles.searchBarInput}
+            placeholder="Search streams, creators..."
+            placeholderTextColor={Theme.colors.textMuted}
+            value={search}
+            onChangeText={setSearch}
+          />
+        </View>
 
-      {loading ? (
-        <ActivityIndicator 
-          size="large" 
-          color={Theme.colors.primary} 
-          style={{ marginTop: 40 }} 
-        />
-      ) : (
-        <>
-          {/* Categories Horizontal Pills List */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.categoriesContainer}
-            contentContainerStyle={styles.categoriesContent}
-          >
-            {categories.map((cat) => (
-              <TouchableOpacity
-                key={cat.id}
-                style={[
-                  styles.categoryPill,
-                  selectedCategorySlug === cat.slug && styles.categoryPillActive,
-                ]}
-                onPress={() => handleCategorySelect(cat.slug)}
-              >
-                <Text
-                  style={[
-                    styles.categoryText,
-                    selectedCategorySlug === cat.slug && styles.categoryTextActive,
-                  ]}
-                >
-                  {cat.name}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          {/* Featured Live Stream Banner */}
-          <Text style={styles.sectionTitle}>Featured Live</Text>
-          {streamsLoading ? (
-            <ActivityIndicator size="small" color={Theme.colors.primary} style={{ margin: 20 }} />
-          ) : featuredStream ? (
-            <TouchableOpacity
-              style={styles.featuredCard}
-              onPress={() => onSelectStream(featuredStream.id)}
+        {loading ? (
+          <ActivityIndicator size="large" color={Theme.colors.primary} style={{ marginTop: 40 }} />
+        ) : (
+          <>
+            {/* Category Pills Horizontal Row */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.categoriesRow}
+              contentContainerStyle={styles.categoriesContent}
             >
-              <View style={styles.featuredPlaceholder}>
-                <View style={styles.featuredBadges}>
-                  <View style={styles.liveBadge}>
-                    <Text style={styles.liveBadgeText}>LIVE</Text>
+              {categories.map((cat) => (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[
+                    styles.categoryPill,
+                    selectedCategorySlug === cat.slug && styles.categoryPillActive,
+                  ]}
+                  onPress={() => handleCategorySelect(cat.slug)}
+                >
+                  <Text
+                    style={[
+                      styles.categoryLabel,
+                      selectedCategorySlug === cat.slug && styles.categoryLabelActive,
+                    ]}
+                  >
+                    {cat.slug !== "all" && getCategoryEmoji(cat.slug) + " "}
+                    {cat.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* LIVE RIGHT NOW SECTION (FEATURED) */}
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>🔴 Live Right Now</Text>
+            </View>
+
+            {featuredStream ? (
+              <TouchableOpacity
+                style={styles.featuredCard}
+                onPress={() => onSelectStream(featuredStream.id)}
+              >
+                {/* Background Banner */}
+                <View style={styles.featuredThumbnail}>
+                  <View style={styles.badgeOverlayRow}>
+                    <View style={styles.liveLabelPill}>
+                      <Text style={styles.liveLabelText}>🔴 LIVE</Text>
+                    </View>
+                    <View style={styles.viewersLabelPill}>
+                      <Text style={styles.viewersLabelText}>
+                        👁 {featuredStream.currentViewerCount > 1000 ? `${(featuredStream.currentViewerCount / 1000).toFixed(1)}k` : featuredStream.currentViewerCount}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.viewerBadge}>
-                    <Text style={styles.viewerBadgeText}>
-                      👁 {featuredStream.currentViewerCount}
+                  
+                  {/* Title overlay */}
+                  <View style={styles.cardTitleOverlay}>
+                    <Text style={styles.cardTitleText} numberOfLines={2}>
+                      {featuredStream.title}
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.liveCastIcon}>((o))</Text>
-              </View>
-              <View style={styles.featuredMeta}>
-                <Text style={styles.featuredCategory}>
-                  {featuredStream.category?.name || "Live Broadcast"}
-                </Text>
-                <Text style={styles.featuredTitle}>{featuredStream.title}</Text>
-                <View style={styles.creatorMeta}>
-                  <View style={styles.creatorAvatar}>
-                    <Text style={styles.creatorAvatarText}>
-                      {featuredStream.creator.displayName[0].toUpperCase()}
+
+                {/* Footer Metadata */}
+                <View style={styles.cardFooter}>
+                  <View style={styles.footerCreatorInfo}>
+                    <View style={styles.footerAvatar}>
+                      <Text style={styles.footerAvatarText}>
+                        {featuredStream.creator.displayName[0].toUpperCase()}
+                      </Text>
+                    </View>
+                    <Text style={styles.footerCreatorName}>
+                      {featuredStream.creator.displayName}
                     </Text>
                   </View>
-                  <Text style={styles.creatorName}>
-                    {featuredStream.creator.displayName}
+                  <Text style={styles.durationText}>
+                    {formatStreamDuration(featuredStream.startedAt)}
                   </Text>
                 </View>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.emptyCardPlaceholder}>
+                <Text style={styles.emptyPlaceholderText}>No streams live right now</Text>
               </View>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.emptyFeatured}>
-              <Text style={styles.emptyText}>No featured stream right now.</Text>
-            </View>
-          )}
+            )}
 
-          {/* Trending Live Streams Grid */}
-          {!streamsLoading && trendingStreams.length > 0 && (
-            <>
-              <Text style={styles.sectionTitle}>Trending Live</Text>
-              <View style={styles.trendingGrid}>
-                {trendingStreams.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={styles.trendingCard}
-                    onPress={() => onSelectStream(item.id)}
-                  >
-                    <View style={styles.trendingThumb}>
-                      <View style={styles.trendingBadges}>
-                        <View style={styles.liveBadgeMini}>
-                          <Text style={styles.liveTextMini}>LIVE</Text>
-                        </View>
-                        <Text style={styles.viewerTextMini}>
-                          👁 {item.currentViewerCount}
-                        </Text>
-                      </View>
-                      <Text style={styles.trendingCardIcon}>📹</Text>
-                    </View>
-                    <Text style={styles.trendingTitle} numberOfLines={1}>
-                      {item.title}
-                    </Text>
-                    <Text style={styles.trendingCreator}>
-                      {item.creator.displayName}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </>
-          )}
-
-          {/* Recommended Creators List */}
-          <Text style={styles.sectionTitle}>Recommended Creators</Text>
-          {recommended.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyText}>No other creators on the platform yet.</Text>
-            </View>
-          ) : (
-            <View style={styles.recommendedList}>
-              {recommended.map((item) => (
-                <View key={item.id} style={styles.recommendedItem}>
-                  <View style={styles.recommendedLeft}>
-                    <View style={styles.recommendedAvatar}>
-                      <Text style={styles.recommendedAvatarText}>
-                        {item.displayName[0].toUpperCase()}
-                      </Text>
-                    </View>
-                    <View>
-                      <View style={{ flexDirection: "row", alignItems: "center" }}>
-                        <Text style={styles.recommendedName}>{item.displayName}</Text>
-                        {item.isLive && (
-                          <View style={styles.liveIndicator}>
-                            <Text style={styles.liveIndicatorText}>LIVE</Text>
-                          </View>
-                        )}
-                      </View>
-                      <Text style={styles.recommendedHandle}>
-                        {item.followerCount} followers
-                      </Text>
-                    </View>
-                  </View>
-                  <TouchableOpacity
-                    style={[
-                      styles.followButton,
-                      item.isFollowing && styles.followingButton,
-                    ]}
-                    onPress={() => handleFollowToggle(item.id, item.isFollowing)}
-                  >
-                    <Text
-                      style={[
-                        styles.followButtonText,
-                        item.isFollowing && styles.followingButtonText,
-                      ]}
-                    >
-                      {item.isFollowing ? "Following" : "+ Follow"}
-                    </Text>
+            {/* TRENDING NOW SECTION (GRID) */}
+            {trendingStreams.length > 0 && (
+              <>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionTitle}>Trending Now</Text>
+                  <TouchableOpacity>
+                    <Text style={styles.seeAllLink}>See all ›</Text>
                   </TouchableOpacity>
                 </View>
-              ))}
-            </View>
-          )}
-        </>
-      )}
-    </ScrollView>
+
+                <View style={styles.trendingGrid}>
+                  {trendingStreams.map((item) => (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.trendingCard}
+                      onPress={() => onSelectStream(item.id)}
+                    >
+                      <View style={styles.trendingThumb}>
+                        <View style={styles.badgeOverlayRowMini}>
+                          <View style={styles.liveLabelPillMini}>
+                            <Text style={styles.liveLabelTextMini}>🔴 LIVE</Text>
+                          </View>
+                          <View style={styles.viewersLabelPillMini}>
+                            <Text style={styles.viewersLabelTextMini}>
+                              👁 {item.currentViewerCount > 1000 ? `${(item.currentViewerCount / 1000).toFixed(1)}k` : item.currentViewerCount}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                      <Text style={styles.trendingCardTitle} numberOfLines={2}>
+                        {item.title}
+                      </Text>
+                      <View style={styles.trendingCreatorRow}>
+                        <View style={styles.trendingCreatorAvatar}>
+                          <Text style={styles.trendingCreatorAvatarText}>
+                            {item.creator.displayName[0].toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text style={styles.trendingCreatorName} numberOfLines={1}>
+                          {item.creator.displayName}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+
+            {/* UPCOMING EVENTS SECTION */}
+            {upcoming.length > 0 && (
+              <>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionTitle}>Upcoming Scheduled Streams</Text>
+                </View>
+                <View style={styles.upcomingList}>
+                  {upcoming.map((item) => (
+                    <View key={item.id} style={styles.upcomingCard}>
+                      <View style={styles.upcomingLeft}>
+                        <View style={styles.calendarIconCircle}>
+                          <Text style={styles.calendarIconEmoji}>📅</Text>
+                        </View>
+                        <View style={styles.upcomingMeta}>
+                          <Text style={styles.upcomingTitle} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          <Text style={styles.upcomingCreatorTime}>
+                            {item.creator.displayName} · {item.scheduledAt ? formatScheduledTime(item.scheduledAt) : ""}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.remindBtn,
+                          item.isReminded && styles.remindBtnActive,
+                        ]}
+                        onPress={() => handleToggleReminder(item.id)}
+                      >
+                        <Text
+                          style={[
+                            styles.remindBtnText,
+                            item.isReminded && styles.remindBtnTextActive,
+                          ]}
+                        >
+                          {item.isReminded ? "Reminded ✓" : "Remind"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              </>
+            )}
+          </>
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -373,7 +429,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Theme.colors.background,
   },
-  contentContainer: {
+  scrollContainer: {
+    flex: 1,
+  },
+  scrollContent: {
     padding: 20,
     paddingBottom: 40,
   },
@@ -384,53 +443,68 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     marginTop: 10,
   },
-  greetingText: {
+  greetingLabel: {
     fontSize: 14,
-    fontWeight: "600",
     color: Theme.colors.textMuted,
+    fontWeight: "500",
   },
-  titleText: {
-    fontSize: 28,
+  displayName: {
+    fontSize: 24,
     fontWeight: "bold",
     color: Theme.colors.text,
+    marginTop: 2,
   },
-  avatarRow: {
+  headerRight: {
     flexDirection: "row",
     alignItems: "center",
   },
-  bellButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: Theme.colors.surface,
+  circleHeaderBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: Theme.colors.border,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 10,
+    marginRight: 12,
   },
-  bellIcon: {
-    fontSize: 18,
+  headerBtnEmoji: {
+    fontSize: 16,
   },
-  avatarCircle: {
+  profileAvatarWrapper: {
+    position: "relative",
+  },
+  profileAvatarCircle: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: Theme.colors.surface,
-    borderWidth: 1.5,
-    borderColor: Theme.colors.border,
+    backgroundColor: "#7DAB8B",
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#FFFFFF",
   },
-  avatarText: {
+  profileAvatarText: {
+    color: "#FFFFFF",
     fontSize: 18,
     fontWeight: "bold",
-    color: Theme.colors.primary,
   },
-  searchContainer: {
+  greenStatusDot: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#34C759",
+    borderWidth: 1.5,
+    borderColor: "#FFFFFF",
+  },
+  searchBar: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: Theme.colors.surface,
+    backgroundColor: "#FFFFFF",
     borderRadius: Theme.roundness.medium,
     height: 52,
     paddingHorizontal: 16,
@@ -438,300 +512,315 @@ const styles = StyleSheet.create({
     borderColor: Theme.colors.border,
     marginBottom: 20,
   },
-  searchIcon: {
+  searchBarIcon: {
     fontSize: 16,
     marginRight: 12,
+    color: Theme.colors.textMuted,
   },
-  searchInput: {
+  searchBarInput: {
     flex: 1,
     fontSize: 16,
     color: Theme.colors.text,
   },
-  categoriesContainer: {
-    marginBottom: 20,
+  categoriesRow: {
+    marginBottom: 24,
   },
   categoriesContent: {
     paddingRight: 10,
   },
   categoryPill: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 20,
-    backgroundColor: Theme.colors.surface,
+    backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: Theme.colors.border,
     marginRight: 10,
   },
   categoryPillActive: {
-    backgroundColor: Theme.colors.primary,
-    borderColor: Theme.colors.primary,
+    backgroundColor: "#1F2024",
+    borderColor: "#1F2024",
   },
-  categoryText: {
+  categoryLabel: {
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
     color: Theme.colors.text,
   },
-  categoryTextActive: {
+  categoryLabelActive: {
     color: "#FFFFFF",
+  },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+    marginTop: 8,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "bold",
     color: Theme.colors.text,
-    marginTop: 10,
-    marginBottom: 16,
+  },
+  seeAllLink: {
+    fontSize: 14,
+    color: "#6B8E78",
+    fontWeight: "bold",
   },
   featuredCard: {
-    backgroundColor: Theme.colors.surface,
-    borderRadius: Theme.roundness.medium,
+    backgroundColor: "#FFFFFF",
+    borderRadius: Theme.roundness.large,
     borderWidth: 1,
     borderColor: Theme.colors.border,
     overflow: "hidden",
     marginBottom: 24,
     shadowColor: Theme.colors.accent,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
     elevation: 2,
   },
-  featuredPlaceholder: {
-    height: 180,
-    backgroundColor: "#D9C3B0", // Muted Beige-Pink base placeholder
-    alignItems: "center",
-    justifyContent: "center",
+  featuredThumbnail: {
+    height: 200,
+    backgroundColor: "#D0C9C0", // Styled warm card placeholder
+    position: "relative",
+    justifyContent: "space-between",
+    padding: 16,
   },
-  liveCastIcon: {
-    fontSize: 48,
-    color: "rgba(255, 255, 255, 0.4)",
-  },
-  featuredBadges: {
-    position: "absolute",
-    top: 12,
-    left: 12,
-    right: 12,
+  badgeOverlayRow: {
     flexDirection: "row",
     justifyContent: "space-between",
   },
-  liveBadge: {
+  liveLabelPill: {
     backgroundColor: "#FF3B30",
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: Theme.roundness.small,
+    borderRadius: 6,
   },
-  liveBadgeText: {
+  liveLabelText: {
     color: "#FFFFFF",
     fontSize: 11,
     fontWeight: "bold",
   },
-  viewerBadge: {
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
+  viewersLabelPill: {
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: Theme.roundness.small,
+    borderRadius: 6,
   },
-  viewerBadgeText: {
+  viewersLabelText: {
     color: "#FFFFFF",
     fontSize: 11,
     fontWeight: "bold",
   },
-  featuredMeta: {
+  cardTitleOverlay: {
+    position: "absolute",
+    bottom: 16,
+    left: 16,
+    right: 16,
+  },
+  cardTitleText: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "bold",
+    textShadowColor: "rgba(0,0,0,0.6)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+    lineHeight: 26,
+  },
+  cardFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     padding: 16,
   },
-  featuredCategory: {
-    fontSize: 12,
-    color: Theme.colors.primary,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    marginBottom: 4,
-  },
-  featuredTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: Theme.colors.text,
-    marginBottom: 12,
-  },
-  creatorMeta: {
+  footerCreatorInfo: {
     flexDirection: "row",
     alignItems: "center",
   },
-  creatorAvatar: {
+  footerAvatar: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: Theme.colors.primary,
+    backgroundColor: "#7DAB8B",
     alignItems: "center",
     justifyContent: "center",
     marginRight: 10,
   },
-  creatorAvatarText: {
+  footerAvatarText: {
     color: "#FFFFFF",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "bold",
   },
-  creatorName: {
+  footerCreatorName: {
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "bold",
     color: Theme.colors.text,
   },
-  emptyFeatured: {
-    backgroundColor: Theme.colors.surface,
-    borderRadius: Theme.roundness.medium,
-    padding: 30,
-    alignItems: "center",
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: Theme.colors.border,
-    marginBottom: 20,
+  durationText: {
+    fontSize: 12,
+    color: Theme.colors.textMuted,
+    fontWeight: "600",
   },
-  emptyText: {
+  emptyCardPlaceholder: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: Theme.roundness.large,
+    padding: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    borderStyle: "dashed",
+    marginBottom: 24,
+  },
+  emptyPlaceholderText: {
     color: Theme.colors.textMuted,
     fontSize: 14,
-    fontWeight: "500",
   },
   trendingGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    marginBottom: 16,
+    marginBottom: 20,
   },
   trendingCard: {
     width: "48%",
-    marginBottom: 20,
-  },
-  trendingThumb: {
-    height: 110,
-    backgroundColor: "#BDD1C5", // Muted Sage-Green base placeholder
-    borderRadius: Theme.roundness.medium,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: Theme.roundness.large,
     borderWidth: 1,
     borderColor: Theme.colors.border,
-    overflow: "hidden",
+    padding: 10,
+    marginBottom: 16,
   },
-  trendingCardIcon: {
-    fontSize: 28,
-    color: "rgba(255, 255, 255, 0.4)",
+  trendingThumb: {
+    height: 100,
+    backgroundColor: "#C3D6C9", // warm sage placeholder background
+    borderRadius: Theme.roundness.medium,
+    padding: 8,
+    marginBottom: 8,
   },
-  trendingBadges: {
-    position: "absolute",
-    top: 8,
-    left: 8,
-    right: 8,
+  badgeOverlayRowMini: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
   },
-  liveBadgeMini: {
+  liveLabelPillMini: {
     backgroundColor: "#FF3B30",
     paddingHorizontal: 6,
     paddingVertical: 3,
     borderRadius: 4,
   },
-  liveTextMini: {
+  liveLabelTextMini: {
     color: "#FFFFFF",
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: "bold",
   },
-  viewerTextMini: {
-    color: "#FFFFFF",
-    fontSize: 9,
-    fontWeight: "bold",
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
+  viewersLabelPillMini: {
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
     paddingHorizontal: 6,
     paddingVertical: 3,
     borderRadius: 4,
   },
-  trendingTitle: {
-    fontSize: 14,
+  viewersLabelTextMini: {
+    color: "#FFFFFF",
+    fontSize: 8,
+    fontWeight: "bold",
+  },
+  trendingCardTitle: {
+    fontSize: 13,
     fontWeight: "bold",
     color: Theme.colors.text,
-    marginBottom: 2,
+    lineHeight: 17,
+    marginBottom: 8,
+    height: 34, // keep constant height for alignment
   },
-  trendingCreator: {
-    fontSize: 12,
+  trendingCreatorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  trendingCreatorAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#EADCC9",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 6,
+  },
+  trendingCreatorAvatarText: {
+    color: "#7E6E5B",
+    fontSize: 9,
+    fontWeight: "bold",
+  },
+  trendingCreatorName: {
+    flex: 1,
+    fontSize: 11,
     color: Theme.colors.textMuted,
+    fontWeight: "500",
   },
-  emptyCard: {
-    backgroundColor: Theme.colors.surface,
-    borderRadius: Theme.roundness.medium,
-    padding: 24,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: Theme.colors.border,
+  upcomingList: {
+    marginBottom: 20,
   },
-  recommendedList: {
-    backgroundColor: Theme.colors.surface,
-    borderRadius: Theme.roundness.medium,
-    borderWidth: 1,
-    borderColor: Theme.colors.border,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  recommendedItem: {
+  upcomingCard: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Theme.colors.border,
+    backgroundColor: "#FFFFFF",
+    borderRadius: Theme.roundness.large,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    padding: 16,
+    marginBottom: 12,
   },
-  recommendedLeft: {
+  upcomingLeft: {
     flexDirection: "row",
     alignItems: "center",
+    flex: 1,
   },
-  recommendedAvatar: {
+  calendarIconCircle: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: Theme.colors.accent,
+    backgroundColor: "#F5F0E8",
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 12,
+    marginRight: 14,
   },
-  recommendedAvatarText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "bold",
+  calendarIconEmoji: {
+    fontSize: 18,
   },
-  recommendedName: {
-    fontSize: 15,
+  upcomingMeta: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  upcomingTitle: {
+    fontSize: 14,
     fontWeight: "bold",
     color: Theme.colors.text,
   },
-  recommendedHandle: {
+  upcomingCreatorTime: {
     fontSize: 12,
     color: Theme.colors.textMuted,
+    marginTop: 4,
+    fontWeight: "500",
   },
-  followButton: {
-    paddingHorizontal: 16,
+  remindBtn: {
+    backgroundColor: "#6B8E78", // soft sage-green theme
+    borderRadius: 8,
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: Theme.roundness.small,
-    backgroundColor: Theme.colors.primary,
+    minWidth: 70,
+    alignItems: "center",
   },
-  followingButton: {
-    backgroundColor: Theme.colors.inputBg,
-    borderWidth: 1,
-    borderColor: Theme.colors.border,
+  remindBtnActive: {
+    backgroundColor: "#ECEAE6",
+    borderWidth: 0.5,
+    borderColor: "#D1CDCA",
   },
-  followButtonText: {
+  remindBtnText: {
     color: "#FFFFFF",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "bold",
   },
-  followingButtonText: {
-    color: Theme.colors.text,
-  },
-  liveIndicator: {
-    backgroundColor: "#FF3B30",
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 4,
-    marginLeft: 6,
-  },
-  liveIndicatorText: {
-    color: "#FFFFFF",
-    fontSize: 9,
-    fontWeight: "bold",
+  remindBtnTextActive: {
+    color: "#7F7F7F",
   },
 });
