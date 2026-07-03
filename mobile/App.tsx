@@ -1,6 +1,10 @@
 import React, { useEffect } from "react";
-import { StyleSheet, Text, View, SafeAreaView, ActivityIndicator, TouchableOpacity, Platform } from "react-native";
+import { StyleSheet, Text, View, SafeAreaView, ActivityIndicator, TouchableOpacity, Platform, LogBox } from "react-native";
 import { TextEncoder, TextDecoder } from "text-encoding";
+import NetInfo from "@react-native-community/netinfo";
+
+// Suppress all developer warning popups on the screen
+LogBox.ignoreAllLogs();
 
 // Polyfill TextEncoder and TextDecoder (Mandatory for livekit-client on Hermes JS engine)
 global.TextEncoder = TextEncoder;
@@ -14,23 +18,73 @@ import CreatorDashboardScreen from "./screens/CreatorDashboardScreen";
 import BrowseScreen from "./screens/BrowseScreen";
 import ViewerLiveScreen from "./screens/ViewerLiveScreen";
 import ProfileScreen from "./screens/ProfileScreen";
+import AlertsScreen from "./screens/AlertsScreen";
+import AutomationsScreen from "./screens/AutomationsScreen";
+import { api } from "./services/api";
 import { Theme } from "./constants/Theme";
 
 // Register LiveKit WebRTC Globals (Mandatory for react-native-webrtc native bridging)
 registerGlobals();
 
-type TabType = "studio" | "browse" | "profile";
+type TabType = "home" | "explore" | "studio" | "alerts" | "profile";
 
 export default function App() {
-  const { identity, isChecked, checkIdentity, logout } = useAuthStore();
+  const { identity, isChecked, checkIdentity } = useAuthStore();
   const [isBroadcasting, setIsBroadcasting] = React.useState(false);
   const [activeStreamId, setActiveStreamId] = React.useState<string | null>(null);
-  const [activeTab, setActiveTab] = React.useState<TabType>("studio");
+  const [activeTab, setActiveTab] = React.useState<TabType>("home");
+  const [studioScreen, setStudioScreen] = React.useState<"dashboard" | "automations">("dashboard");
+  const [unreadCount, setUnreadCount] = React.useState(0);
 
-  // Load identity from MMKV storage on mount
+  const [isOfflineToastVisible, setIsOfflineToastVisible] = React.useState(false);
+  const [isOnlineToastVisible, setIsOnlineToastVisible] = React.useState(false);
+
+  // Load identity and set up connectivity toast listeners
   useEffect(() => {
     checkIdentity();
+
+    let firstLoad = true;
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const isConnected = !!state.isConnected;
+      if (firstLoad) {
+        firstLoad = false;
+        if (!isConnected) {
+          setIsOfflineToastVisible(true);
+        }
+        return;
+      }
+
+      if (!isConnected) {
+        setIsOnlineToastVisible(false);
+        setIsOfflineToastVisible(true);
+      } else {
+        setIsOfflineToastVisible(false);
+        setIsOnlineToastVisible(true);
+        const timer = setTimeout(() => {
+          setIsOnlineToastVisible(false);
+        }, 3000);
+        return () => clearTimeout(timer);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
+
+  const fetchUnreadNotifications = async () => {
+    try {
+      const response = await api.get("/api/notifications");
+      const unread = response.data.filter((n: any) => !n.read).length;
+      setUnreadCount(unread);
+    } catch (e) {
+      console.warn("Failed to fetch unread notification count:", e);
+    }
+  };
+
+  useEffect(() => {
+    if (identity) {
+      fetchUnreadNotifications();
+    }
+  }, [activeTab, identity]);
 
   // Display a warm beige splash skeleton during initial disk reads
   if (!isChecked) {
@@ -63,20 +117,36 @@ export default function App() {
 
   const renderTabContent = () => {
     switch (activeTab) {
-      case "studio":
-        return (
-          <CreatorDashboardScreen
-            onStartBroadcast={() => setIsBroadcasting(true)}
-          />
-        );
-      case "browse":
+      case "home":
+      case "explore":
         return (
           <BrowseScreen
             onSelectStream={(id) => setActiveStreamId(id)}
           />
         );
+      case "studio":
+        if (studioScreen === "automations") {
+          return <AutomationsScreen onGoBack={() => setStudioScreen("dashboard")} />;
+        }
+        return (
+          <CreatorDashboardScreen
+            onStartBroadcast={() => setIsBroadcasting(true)}
+            onNavigateToAutomations={() => setStudioScreen("automations")}
+          />
+        );
+      case "alerts":
+        return <AlertsScreen />;
       case "profile":
-        return <ProfileScreen />;
+        return (
+          <ProfileScreen
+            onNavigateTab={(tab) => {
+              setActiveTab(tab);
+              if (tab !== "studio") {
+                setStudioScreen("dashboard");
+              }
+            }}
+          />
+        );
     }
   };
 
@@ -87,45 +157,79 @@ export default function App() {
 
       {/* Floating Bottom Navigation Tab Bar */}
       <View style={styles.tabBar}>
-        {/* Tab 1: Creator Studio */}
+        {/* Tab 1: Home */}
         <TouchableOpacity
-          style={[styles.tabItem, activeTab === "studio" && styles.tabItemActive]}
-          onPress={() => setActiveTab("studio")}
+          style={[styles.tabItem, activeTab === "home" && styles.tabItemActive]}
+          onPress={() => setActiveTab("home")}
         >
-          <Text style={[styles.tabIcon, activeTab === "studio" && styles.tabIconActive]}>
-            🎬
+          <Text style={[styles.tabIcon, activeTab === "home" && styles.tabIconActive]}>
+            🏠
           </Text>
-          <Text style={[styles.tabLabel, activeTab === "studio" && styles.tabLabelActive]}>
-            Studio
+          <Text style={[styles.tabLabel, activeTab === "home" && styles.tabLabelActive]}>
+            Home
           </Text>
         </TouchableOpacity>
 
-        {/* Tab 2: Discover Browse */}
+        {/* Center Tab: Live Broadcast */}
         <TouchableOpacity
-          style={[styles.tabItem, activeTab === "browse" && styles.tabItemActive]}
-          onPress={() => setActiveTab("browse")}
+          style={styles.centerTabItem}
+          onPress={() => setIsBroadcasting(true)}
         >
-          <Text style={[styles.tabIcon, activeTab === "browse" && styles.tabIconActive]}>
-            🧭
-          </Text>
-          <Text style={[styles.tabLabel, activeTab === "browse" && styles.tabLabelActive]}>
-            Browse
+          <View style={styles.liveCircleButton}>
+            <Text style={styles.liveCircleButtonText}>((o))</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Tab 4: Alerts */}
+        <TouchableOpacity
+          style={[styles.tabItem, activeTab === "alerts" && styles.tabItemActive]}
+          onPress={() => setActiveTab("alerts")}
+        >
+          <View style={styles.badgeContainer}>
+            <Text style={[styles.tabIcon, activeTab === "alerts" && styles.tabIconActive]}>
+              🔔
+            </Text>
+            {unreadCount > 0 && (
+              <View style={styles.tabBadge}>
+                <Text style={styles.tabBadgeText}>{unreadCount}</Text>
+              </View>
+            )}
+          </View>
+          <Text style={[styles.tabLabel, activeTab === "alerts" && styles.tabLabelActive]}>
+            Alerts
           </Text>
         </TouchableOpacity>
 
-        {/* Tab 3: Profile Settings */}
+        {/* Tab 5: Profile */}
         <TouchableOpacity
-          style={[styles.tabItem, activeTab === "profile" && styles.tabItemActive]}
-          onPress={() => setActiveTab("profile")}
+          style={[styles.tabItem, (activeTab === "profile" || activeTab === "studio") && styles.tabItemActive]}
+          onPress={() => {
+            setActiveTab("profile");
+            setStudioScreen("dashboard");
+          }}
         >
-          <Text style={[styles.tabIcon, activeTab === "profile" && styles.tabIconActive]}>
+          <Text style={[styles.tabIcon, (activeTab === "profile" || activeTab === "studio") && styles.tabIconActive]}>
             👤
           </Text>
-          <Text style={[styles.tabLabel, activeTab === "profile" && styles.tabLabelActive]}>
+          <Text style={[styles.tabLabel, (activeTab === "profile" || activeTab === "studio") && styles.tabLabelActive]}>
             Profile
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* Network Offline Toast */}
+      {isOfflineToastVisible && (
+        <View style={styles.offlineToast}>
+          <Text style={styles.toastText}>📶 Connection Lost: You are offline</Text>
+        </View>
+      )}
+
+      {/* Network Restored Toast */}
+      {isOnlineToastVisible && (
+        <View style={styles.onlineToast}>
+          <Text style={styles.toastText}>🟢 Connection Restored: Back Online</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -309,5 +413,128 @@ const styles = StyleSheet.create({
     color: Theme.colors.accent,
     fontWeight: "bold",
     fontSize: 16,
+  },
+  centerTabItem: {
+    width: 60,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  liveCircleButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#1F2024",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: -16,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  liveCircleButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  badgeContainer: {
+    position: "relative",
+  },
+  tabBadge: {
+    position: "absolute",
+    top: -4,
+    right: -8,
+    backgroundColor: "#FF3B30",
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  tabBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: "bold",
+  },
+  alertContainer: {
+    flex: 1,
+    padding: 20,
+    backgroundColor: Theme.colors.background,
+  },
+  alertHeaderTitle: {
+    fontSize: 28,
+    fontWeight: "bold",
+    color: Theme.colors.text,
+    marginBottom: 20,
+    marginTop: 10,
+  },
+  alertCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: Theme.roundness.medium,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    padding: 16,
+    marginBottom: 14,
+  },
+  alertTitle: {
+    fontSize: 15,
+    fontWeight: "bold",
+    color: Theme.colors.text,
+    marginBottom: 4,
+  },
+  alertBody: {
+    fontSize: 13,
+    color: Theme.colors.textSecondary,
+    lineHeight: 18,
+  },
+  alertTime: {
+    fontSize: 11,
+    color: Theme.colors.textMuted,
+    marginTop: 6,
+    fontWeight: "600",
+  },
+  offlineToast: {
+    position: "absolute",
+    top: Platform.OS === "ios" ? 60 : 30,
+    left: 20,
+    right: 20,
+    backgroundColor: "#E25C5C", // Premium soft warm red
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: Theme.roundness.medium,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 99999,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  onlineToast: {
+    position: "absolute",
+    top: Platform.OS === "ios" ? 60 : 30,
+    left: 20,
+    right: 20,
+    backgroundColor: "#6B8E78", // Premium soft warm sage-green
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: Theme.roundness.medium,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 99999,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  toastText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "bold",
+    letterSpacing: 0.3,
   },
 });
