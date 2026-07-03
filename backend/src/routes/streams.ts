@@ -136,7 +136,7 @@ streamsRouter.get("/", async (req: Request, res: Response) => {
 
   try {
     const activeStreams = await StreamService.getActiveStreams(
-      categorySlug ? String(categorySlug) : undefined
+      categorySlug && categorySlug !== "all" ? String(categorySlug) : undefined
     );
     res.status(200).json(activeStreams);
   } catch (error: any) {
@@ -272,9 +272,14 @@ streamsRouter.post("/schedule", async (req: Request, res: Response) => {
  * Fetches all scheduled streams, including user-specific reminder state.
  */
 streamsRouter.get("/upcoming", async (req: Request, res: Response) => {
+  const { category: categorySlug } = req.query;
+
   try {
     const upcoming = await prisma.stream.findMany({
-      where: { status: "SCHEDULED" },
+      where: {
+        status: "SCHEDULED",
+        ...(categorySlug && categorySlug !== "all" ? { category: { slug: String(categorySlug) } } : {}),
+      },
       include: {
         creator: { select: { id: true, displayName: true } },
         category: { select: { id: true, name: true, slug: true } },
@@ -313,6 +318,33 @@ streamsRouter.get("/upcoming", async (req: Request, res: Response) => {
     res.status(200).json(upcomingWithReminders);
   } catch (error: any) {
     console.error("[Get Upcoming Error]:", error);
+    res.status(500).json({ error: "Internal Server Error", message: error.message });
+  }
+});
+
+/**
+ * GET /api/streams/recent - List recently ended broadcasts (past streams)
+ */
+streamsRouter.get("/recent", async (req: Request, res: Response) => {
+  const { category: categorySlug } = req.query;
+
+  try {
+    const recentStreams = await prisma.stream.findMany({
+      where: {
+        status: "ENDED",
+        ...(categorySlug && categorySlug !== "all" ? { category: { slug: String(categorySlug) } } : {}),
+      },
+      include: {
+        creator: { select: { id: true, displayName: true } },
+        category: { select: { id: true, name: true, slug: true } },
+        highlight: true,
+      },
+      orderBy: { endedAt: "desc" },
+      take: 10,
+    });
+    res.status(200).json(recentStreams);
+  } catch (error: any) {
+    console.error("[Get Recent Streams Error]:", error);
     res.status(500).json({ error: "Internal Server Error", message: error.message });
   }
 });

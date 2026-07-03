@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { WebhookReceiver } from "livekit-server-sdk";
 import { prisma, redis } from "../config/db";
-import { broadcastViewerCount } from "../socket";
+import { broadcastViewerCount, broadcastStreamEnded } from "../socket";
 import { n8nTriggers } from "../utils/n8n";
 
 export const webhooksRouter = Router();
@@ -120,6 +120,26 @@ webhooksRouter.post("/livekit", async (req: Request, res: Response) => {
 
       console.log(`[LiveKit Webhook]: -left ${roomName} (${participantId}). Viewers: ${count}`);
       broadcastViewerCount(streamId, count);
+    }
+    
+    else if (event.event === "room_finished") {
+      // Find stream matching room name
+      const liveStream = await prisma.stream.findFirst({
+        where: { livekitRoomName: roomName }
+      });
+      
+      if (liveStream) {
+        await prisma.stream.update({
+          where: { id: liveStream.id },
+          data: {
+            status: "ENDED",
+            endedAt: new Date().toISOString(),
+          },
+        });
+        
+        broadcastStreamEnded(liveStream.id);
+        console.log(`[LiveKit Webhook]: Room finished. Shifted stream ${liveStream.id} to ENDED and broadcasted socket event.`);
+      }
     }
 
     res.status(200).json({ status: "processed", event: event.event });
