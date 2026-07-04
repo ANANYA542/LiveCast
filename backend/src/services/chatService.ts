@@ -80,48 +80,53 @@ export const ChatService = {
     }>,
     userId: string
   ) => {
-    const results = [];
+    if (messages.length === 0) return [];
+
     const serverTimestamp = new Date().toISOString(); // Strict sequencing timestamp
+    const clientMessageIds = messages.map((m) => m.clientMessageId);
 
-    for (const msg of messages) {
-      const { streamId, content, clientMessageId, clientTimestamp } = msg;
+    // 1. Check idempotency: retrieve existing records matching clientMessageIds in a single query
+    const existingList = await prisma.chatMessage.findMany({
+      where: {
+        clientMessageId: { in: clientMessageIds },
+      },
+      include: {
+        user: {
+          select: { id: true, displayName: true },
+        },
+      },
+    });
 
-      // 1. Check idempotency: If message already exists, skip it
-      const existing = await prisma.chatMessage.findUnique({
-        where: { clientMessageId },
-        include: {
-          user: {
-            select: { id: true, displayName: true },
+    const existingMap = new Map(existingList.map((m) => [m.clientMessageId, m]));
+    const messagesToCreate = messages.filter((m) => !existingMap.has(m.clientMessageId));
+
+    // 2. Create non-existing messages in parallel
+    const createdList = await Promise.all(
+      messagesToCreate.map((msg) =>
+        prisma.chatMessage.create({
+          data: {
+            streamId: msg.streamId,
+            userId,
+            content: msg.content,
+            clientMessageId: msg.clientMessageId,
+            isOfflineSync: true,
+            clientTimestamp: msg.clientTimestamp,
+            serverTimestamp,
           },
-        },
-      });
-
-      if (existing) {
-        results.push(existing);
-        continue;
-      }
-
-      // 2. Insert new message flagging it as offline sync and preserving client timestamp
-      const saved = await prisma.chatMessage.create({
-        data: {
-          streamId,
-          userId,
-          content,
-          clientMessageId,
-          isOfflineSync: true,
-          clientTimestamp,
-          serverTimestamp,
-        },
-        include: {
-          user: {
-            select: { id: true, displayName: true },
+          include: {
+            user: {
+              select: { id: true, displayName: true },
+            },
           },
-        },
-      });
+        })
+      )
+    );
 
-      results.push(saved);
-    }
+    const createdMap = new Map(createdList.map((m) => [m.clientMessageId, m]));
 
-    return results;
+    // 3. Map back to original list preserving the input sequence
+    return messages
+      .map((msg) => existingMap.get(msg.clientMessageId) || createdMap.get(msg.clientMessageId))
+      .filter((m): m is Exclude<typeof m, undefined> => !!m);
   },
 };

@@ -171,16 +171,17 @@ export function registerChatHandlers(io: Server, socket: Socket) {
       // 4. Redis Rate Limiter: 5 messages/second per user
       const rateLimitKey = `rate_limit:${streamId}:${user.id}`;
       const count = await redis.incr(rateLimitKey);
+      console.log(`[Rate Limiter Debug]: user=${user.displayName} id=${user.id} key=${rateLimitKey} count=${count}`);
       
       if (count === 1) {
-        await redis.expire(rateLimitKey, 1);
+        await redis.expire(rateLimitKey, 5);
       }
 
-      if (count > 5) {
+      if (count > 3) {
         console.warn(`[Socket.IO]: Rate limit hit for user ${user.displayName} on stream ${streamId}`);
         socket.emit("chat:error", {
           reason: "rate_limited",
-          message: "Spam warning: rate limit exceeded (max 5 messages/sec).",
+          message: "Spam warning: rate limit exceeded (max 3 messages/5 sec).",
           clientMessageId,
         });
         return;
