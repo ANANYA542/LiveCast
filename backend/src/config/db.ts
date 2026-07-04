@@ -70,10 +70,12 @@ try {
   const url = process.env.REDIS_URL || "redis://localhost:6379";
   
   // Set minimal connection retries so it falls back immediately if server is down
+  const isSecure = url.startsWith("rediss://");
   const rawClient = new Redis(url, {
     maxRetriesPerRequest: 1,
     connectTimeout: 1500,
-    retryStrategy: () => null // Stop attempting reconnects
+    retryStrategy: () => null, // Stop attempting reconnects
+    ...(isSecure ? { tls: { rejectUnauthorized: false } } : {})
   });
 
   rawClient.on("error", (err) => {
