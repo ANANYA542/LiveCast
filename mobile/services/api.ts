@@ -3,8 +3,17 @@ import { IdentityManager } from "./identity";
 
 import { NativeModules, Platform } from "react-native";
 
+// Set to true to force connect to the deployed Render backend even in local dev mode.
+// Standalone release builds will automatically use the production URL.
+const USE_PRODUCTION_BACKEND = false;
+const PRODUCTION_URL = "https://livecast-rag6.onrender.com";
+
 // Resolve host IP dynamically from the Metro bundle URL to prevent network connection errors
 const getBaseUrl = () => {
+  if (USE_PRODUCTION_BACKEND || !__DEV__) {
+    return PRODUCTION_URL;
+  }
+
   const scriptURL = NativeModules.SourceCode?.scriptURL;
   if (scriptURL) {
     const matches = scriptURL.match(/^https?:\/\/([^:/]+)/);
