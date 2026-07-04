@@ -50,6 +50,7 @@ export default function BrowseScreen({
   const identity = useAuthStore((state) => state.identity);
   const [streams, setStreams] = useState<LiveStream[]>([]);
   const [upcoming, setUpcoming] = useState<LiveStream[]>([]);
+  const [recentLives, setRecentLives] = useState<LiveStream[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [search, setSearch] = useState("");
   const [selectedCategorySlug, setSelectedCategorySlug] = useState<string>("all");
@@ -65,7 +66,8 @@ export default function BrowseScreen({
     await Promise.all([
       fetchCategories(),
       fetchActiveStreams("all"),
-      fetchUpcomingStreams(),
+      fetchUpcomingStreams("all"),
+      fetchRecentStreams("all"),
     ]);
     setLoading(false);
   };
@@ -74,7 +76,8 @@ export default function BrowseScreen({
     setRefreshing(true);
     await Promise.all([
       fetchActiveStreams(selectedCategorySlug),
-      fetchUpcomingStreams(),
+      fetchUpcomingStreams(selectedCategorySlug),
+      fetchRecentStreams(selectedCategorySlug),
     ]);
     setRefreshing(false);
   };
@@ -98,18 +101,31 @@ export default function BrowseScreen({
     }
   };
 
-  const fetchUpcomingStreams = async () => {
+  const fetchUpcomingStreams = async (categorySlug: string) => {
     try {
-      const response = await api.get("/api/streams/upcoming");
+      const url = categorySlug === "all" ? "/api/streams/upcoming" : `/api/streams/upcoming?category=${categorySlug}`;
+      const response = await api.get(url);
       setUpcoming(response.data);
     } catch (e) {
       console.warn("Failed to load upcoming streams:", e);
     }
   };
 
+  const fetchRecentStreams = async (categorySlug: string) => {
+    try {
+      const url = categorySlug === "all" ? "/api/streams/recent" : `/api/streams/recent?category=${categorySlug}`;
+      const response = await api.get(url);
+      setRecentLives(response.data);
+    } catch (e) {
+      console.warn("Failed to load recent streams:", e);
+    }
+  };
+
   const handleCategorySelect = (categorySlug: string) => {
     setSelectedCategorySlug(categorySlug);
     fetchActiveStreams(categorySlug);
+    fetchRecentStreams(categorySlug);
+    fetchUpcomingStreams(categorySlug);
   };
 
   const handleToggleReminder = async (streamId: string) => {
@@ -325,18 +341,15 @@ export default function BrowseScreen({
               </View>
             )}
 
-            {/* TRENDING NOW SECTION (GRID) */}
-            {trendingStreams.length > 0 && (
+            {/* RECENT BROADCASTS SECTION (GRID) */}
+            {recentLives.length > 0 && (
               <>
                 <View style={styles.sectionHeaderRow}>
-                  <Text style={styles.sectionTitle}>Trending Now</Text>
-                  <TouchableOpacity>
-                    <Text style={styles.seeAllLink}>See all ›</Text>
-                  </TouchableOpacity>
+                  <Text style={styles.sectionTitle}>Recent Broadcasts</Text>
                 </View>
 
                 <View style={styles.trendingGrid}>
-                  {trendingStreams.map((item) => (
+                  {recentLives.map((item) => (
                     <TouchableOpacity
                       key={item.id}
                       style={styles.trendingCard}
@@ -344,12 +357,12 @@ export default function BrowseScreen({
                     >
                       <View style={styles.trendingThumb}>
                         <View style={styles.badgeOverlayRowMini}>
-                          <View style={styles.liveLabelPillMini}>
-                            <Text style={styles.liveLabelTextMini}>🔴 LIVE</Text>
+                          <View style={[styles.liveLabelPillMini, { backgroundColor: "#8E8E93" }]}>
+                            <Text style={styles.liveLabelTextMini}>🎬 Ended</Text>
                           </View>
                           <View style={styles.viewersLabelPillMini}>
                             <Text style={styles.viewersLabelTextMini}>
-                              👁 {item.currentViewerCount > 1000 ? `${(item.currentViewerCount / 1000).toFixed(1)}k` : item.currentViewerCount}
+                              👁 Peak: {item.peakViewerCount}
                             </Text>
                           </View>
                         </View>

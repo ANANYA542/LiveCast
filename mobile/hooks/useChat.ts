@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { Alert } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { api } from "../services/api";
 import { SocketManager } from "../services/socket";
@@ -200,6 +201,10 @@ export function useChat(streamId: string) {
     socket.on("chat:error", (error: { reason: string; message: string; clientMessageId?: string }) => {
       console.warn("[useChat]: Message error from server:", error);
 
+      if (error.reason === "rate_limited") {
+        Alert.alert("Spam Alert", "Spam warning: Please stop spamming!");
+      }
+
       if (error.clientMessageId) {
         setMessages((prev) =>
           prev.map((m) =>
@@ -265,9 +270,11 @@ export function useChat(streamId: string) {
     // Optimistically update locally
     setMessages((prev) => [...prev, optimisticMessage]);
 
-    // Check device online status
-    if (!isOnline) {
-      console.log("[useChat]: Offline detected. Enqueueing chat to outbox.");
+    const isSocketConnected = socketRef.current && socketRef.current.connected;
+
+    // Check device online status and socket connectivity
+    if (!isOnline || !isSocketConnected) {
+      console.log("[useChat]: Offline or socket disconnected. Enqueueing chat to outbox.");
       OutboxService.enqueue({
         streamId,
         content,

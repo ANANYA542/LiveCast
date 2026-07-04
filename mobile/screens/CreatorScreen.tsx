@@ -16,6 +16,7 @@ import {
   KeyboardAvoidingView,
 } from "react-native";
 import { LiveKitRoom, VideoView, useLocalParticipant } from "@livekit/react-native";
+import { mediaDevices, RTCView } from "@livekit/react-native-webrtc";
 import { Track } from "livekit-client";
 import { api } from "../services/api";
 import { Theme } from "../constants/Theme";
@@ -314,11 +315,53 @@ export default function CreatorScreen({ onGoBack }: { onGoBack: () => void }) {
   const [privacy, setPrivacy] = useState<"public" | "followers_only">("public");
   const [tags, setTags] = useState("");
 
+  const [previewStream, setPreviewStream] = useState<any>(null);
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
+  const previewStreamRef = useRef<any>(null);
 
-  // Load categories from database on mount
+  // Load camera preview track and database categories on mount
   useEffect(() => {
     fetchCategories();
+    startPreview(facingMode);
+
+    return () => {
+      if (previewStreamRef.current) {
+        previewStreamRef.current.getTracks().forEach((track: any) => track.stop());
+      }
+    };
   }, []);
+
+  const startPreview = async (facing: "user" | "environment") => {
+    try {
+      const hasPermissions = await requestAndroidPermissions();
+      if (!hasPermissions) return;
+
+      // Stop any existing tracks first to avoid hardware camera lock conflicts
+      if (previewStreamRef.current) {
+        previewStreamRef.current.getTracks().forEach((track: any) => track.stop());
+      }
+
+      const stream = await mediaDevices.getUserMedia({
+        video: {
+          facingMode: facing,
+          width: 640,
+          height: 360,
+          frameRate: 24,
+        },
+        audio: false,
+      });
+      setPreviewStream(stream);
+      previewStreamRef.current = stream;
+    } catch (e) {
+      console.warn("Failed to start camera preview:", e);
+    }
+  };
+
+  const handleSwapCamera = () => {
+    const nextFacing = facingMode === "user" ? "environment" : "user";
+    setFacingMode(nextFacing);
+    startPreview(nextFacing);
+  };
 
   const fetchCategories = async () => {
     try {
@@ -469,11 +512,19 @@ export default function CreatorScreen({ onGoBack }: { onGoBack: () => void }) {
           
           {/* Camera Preview Card */}
           <View style={styles.cameraPreviewCard}>
-            <View style={styles.cameraPreviewCenter}>
-              <Text style={styles.cameraPreviewIcon}>📷</Text>
-              <Text style={styles.cameraPreviewText}>Camera Preview</Text>
-            </View>
-            <TouchableOpacity style={styles.cameraSwapButton}>
+            {previewStream ? (
+              <RTCView
+                streamURL={previewStream.toURL()}
+                style={StyleSheet.absoluteFillObject}
+                objectFit="cover"
+              />
+            ) : (
+              <View style={styles.cameraPreviewCenter}>
+                <Text style={styles.cameraPreviewIcon}>📷</Text>
+                <Text style={styles.cameraPreviewText}>Camera Preview</Text>
+              </View>
+            )}
+            <TouchableOpacity style={styles.cameraSwapButton} onPress={handleSwapCamera}>
               <Text style={styles.cameraSwapIcon}>🔄</Text>
             </TouchableOpacity>
           </View>

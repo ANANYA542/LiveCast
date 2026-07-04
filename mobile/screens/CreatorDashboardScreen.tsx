@@ -389,6 +389,11 @@ export default function CreatorDashboardScreen({
                     <Text style={styles.recentSubtext}>
                       {formatPastDate(item.startedAt)} · {item.peakViewerCount > 1000 ? `${(item.peakViewerCount / 1000).toFixed(1)}k` : item.peakViewerCount} views · {formatStreamDuration(item.startedAt, item.endedAt)}
                     </Text>
+                    {item.highlight && (
+                      <View style={styles.highlightBadge}>
+                        <Text style={styles.highlightBadgeText}>✨ Highlight: {item.highlight.summary}</Text>
+                      </View>
+                    )}
                   </View>
                 </View>
                 <TouchableOpacity style={styles.optionsBtn}>
@@ -946,6 +951,19 @@ const styles = StyleSheet.create({
   recentMeta: {
     flex: 1,
     paddingRight: 8,
+  },
+  highlightBadge: {
+    marginTop: 4,
+    backgroundColor: "rgba(235, 172, 38, 0.15)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: "flex-start",
+  },
+  highlightBadgeText: {
+    color: "#D09E1B",
+    fontSize: 11,
+    fontWeight: "600",
   },
   recentTitle: {
     fontSize: 14,
