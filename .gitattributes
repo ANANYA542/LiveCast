@@ -1,0 +1,7 @@
+# Mark generated React Native native build directories as vendored code
+# so they are excluded from GitHub's language statistics.
+mobile/android/** linguist-vendored
+mobile/ios/** linguist-vendored
+n8n-workflows/** linguist-documentation
+implementation_plan.md linguist-documentation
+prompt.md linguist-documentation
