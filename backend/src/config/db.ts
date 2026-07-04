@@ -3,7 +3,6 @@ import Redis from "ioredis";
 
 export const prisma = new PrismaClient();
 
-// In-Memory Redis Mock Fallback for local runs without a Redis server
 class RedisMock {
   private store: Map<string, string> = new Map();
   private sets: Map<string, Set<string>> = new Map();
@@ -63,24 +62,20 @@ class RedisMock {
   }
 }
 
-// Initialize Redis client, falling back to mock if no connection is active
 let redisClient: any;
 
 try {
   const url = process.env.REDIS_URL || "redis://localhost:6379";
-  
-  // Set minimal connection retries so it falls back immediately if server is down
   const isSecure = url.startsWith("rediss://");
   const rawClient = new Redis(url, {
     maxRetriesPerRequest: 1,
     connectTimeout: 1500,
-    retryStrategy: () => null, // Stop attempting reconnects
+    retryStrategy: () => null,
     ...(isSecure ? { tls: { rejectUnauthorized: false } } : {})
   });
 
   rawClient.on("error", (err) => {
     console.warn(`[Redis Connection Error]: ${err.message}. Falling back to In-Memory Redis Mock.`);
-    // Dynamically re-assign helper functions to the mock client
     Object.assign(redis, new RedisMock());
   });
 

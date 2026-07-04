@@ -32,13 +32,8 @@ export function useChat(streamId: string) {
   const [isConnected, setIsConnected] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
 
-  // Keep a reference to the active socket
   const socketRef = useRef<any>(null);
-  
-  // Prevent parallel sync loops
   const isSyncingRef = useRef(false);
-
-  // Track the timestamp of the last successfully received message to catch up after reconnects
   const lastMessageTimestampRef = useRef<string | null>(null);
 
   const updateLastTimestamp = (msgs: Message[]) => {
@@ -48,7 +43,6 @@ export function useChat(streamId: string) {
     lastMessageTimestampRef.current = new Date(maxTime).toISOString();
   };
 
-  // Exponential Backoff synchronization runner
   const syncOutbox = async (retryCount = 0) => {
     if (isSyncingRef.current) return;
     const queue = OutboxService.getQueue();
@@ -61,11 +55,9 @@ export function useChat(streamId: string) {
       const response = await api.post("/api/chat/sync", { messages: queue });
       const { syncedMessages } = response.data;
 
-      // 1. Clear successfully synced message keys from MMKV queue
       const syncedIds = queue.map((m) => m.clientMessageId);
       OutboxService.dequeue(syncedIds);
 
-      // 2. Resolve optimistic message rendering
       setMessages((prev) => {
         const resolved = prev.map((msg) => {
           const matchingSync = syncedMessages.find((s: any) => s.clientMessageId === msg.clientMessageId);
@@ -79,7 +71,6 @@ export function useChat(streamId: string) {
     } catch (err) {
       isSyncingRef.current = false;
 
-      // Calculate exponential backoff delay: 1s, 2s, 4s, 8s, max 16s
       const delay = Math.min(1000 * Math.pow(2, retryCount), 16000);
       console.warn(`[useChat]: Sync failed. Retrying in ${delay / 1000}s... (Attempt #${retryCount + 1})`);
 
@@ -89,7 +80,6 @@ export function useChat(streamId: string) {
     }
   };
 
-  // Monitor net connection and trigger batch outbox flushes upon recovery
   useEffect(() => {
     const unsubscribeNet = NetInfo.addEventListener((state) => {
       const currentlyOnline = !!state.isConnected;
@@ -105,7 +95,6 @@ export function useChat(streamId: string) {
   useEffect(() => {
     if (!identity || !streamId) return;
 
-    // 1. Fetch initial chat history via REST API
     const loadHistory = async () => {
       try {
         const response = await api.get(`/api/chat/${streamId}/messages`);
@@ -121,15 +110,12 @@ export function useChat(streamId: string) {
 
     loadHistory();
 
-    // 2. Connect/Retrieve the Socket.IO instance
     const socket = SocketManager.connect(identity.id, identity.displayName);
     socketRef.current = socket;
     setIsConnected(socket.connected);
 
-    // Join the specific stream chat room
     socket.emit("room:join", { streamId });
 
-    // 3. Reconnection catch-up helper
     const catchUpMessages = async (sinceTimestamp: string) => {
       try {
         console.log(`[useChat]: Requesting catch-up chat logs since: ${sinceTimestamp}`);
@@ -142,13 +128,11 @@ export function useChat(streamId: string) {
           setMessages((prev) => {
             const combined = [...prev, ...missed];
             
-            // Deduplicate based on unique clientMessageId
             const uniqueMap = new Map<string, Message>();
             for (const m of combined) {
               uniqueMap.set(m.clientMessageId, m);
             }
             
-            // Sort chronologically by clientTimestamp
             const uniqueList = Array.from(uniqueMap.values());
             uniqueList.sort((a, b) => new Date(a.clientTimestamp).getTime() - new Date(b.clientTimestamp).getTime());
             
@@ -161,15 +145,12 @@ export function useChat(streamId: string) {
       }
     };
 
-    // 4. Socket connection event bindings
     socket.on("connect", () => {
       console.log("[useChat]: Socket reconnected. Checking catch-ups...");
       setIsConnected(true);
       
-      // Always re-join room namespace upon reconnect
       socket.emit("room:join", { streamId });
 
-      // If we have previous messages, request missed items
       if (lastMessageTimestampRef.current) {
         catchUpMessages(lastMessageTimestampRef.current);
       }
@@ -179,7 +160,6 @@ export function useChat(streamId: string) {
       setIsConnected(false);
     });
 
-    // 5. Socket chat listener bindings
     socket.on("chat:new_message", (message: Message) => {
       setMessages((prev) => {
         const exists = prev.findIndex((m) => m.clientMessageId === message.clientMessageId);
@@ -228,7 +208,6 @@ export function useChat(streamId: string) {
       }
     });
 
-    // Cleanup logic when components unmount
     return () => {
       if (socket) {
         socket.emit("room:leave", { streamId });
@@ -242,14 +221,9 @@ export function useChat(streamId: string) {
     };
   }, [streamId, identity]);
 
-  /**
-   * Optimistically posts a message locally and emits it to Socket.IO.
-   * If offline, enqueues to MMKV cache for subsequent sync.
-   */
   const sendMessage = (content: string) => {
     if (!identity || !content.trim()) return;
 
-    // Generate lightweight client key
     const clientMessageId = `msg-${identity.id.substring(0, 5)}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
     const clientTimestamp = new Date().toISOString();
 
@@ -267,12 +241,10 @@ export function useChat(streamId: string) {
       pending: true,
     };
 
-    // Optimistically update locally
     setMessages((prev) => [...prev, optimisticMessage]);
 
     const isSocketConnected = socketRef.current && socketRef.current.connected;
 
-    // Check device online status and socket connectivity
     if (!isOnline || !isSocketConnected) {
       console.log("[useChat]: Offline or socket disconnected. Enqueueing chat to outbox.");
       OutboxService.enqueue({
@@ -284,7 +256,6 @@ export function useChat(streamId: string) {
       return;
     }
 
-    // Send payload over WSS
     if (socketRef.current) {
       socketRef.current.emit("chat:message", {
         streamId,
