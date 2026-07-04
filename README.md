@@ -100,16 +100,25 @@ Real-time chat is routed through Socket.IO. When connection drops, messages queu
 
 ```mermaid
 graph TD
-    A[Client App] -->|WebSocket Connection Active| B(Socket.IO Server)
-    A -->|Connection Lost| C(MMKV Outbox Cache)
-    C -->|Store Pending Messages| C
-    A -->|Connection Restored| D{Run syncOutbox}
-    D -->|Post Batch Outbox| E(Express API: /api/chat/sync)
-    E -->|Write Logs| F(PostgreSQL)
-    E -->|Broadcast to Active Room| B
-    D -->|Request Missed Logs| G(Express API: /api/chat/:id/messages?since=timestamp)
-    G -->|Fetch Missed Logs| F
-    G -->|Merge History & Deduplicate| A
+    Client[Client App]
+    
+    %% Online Flow
+    Client -->|Online: Send Chat| Socket[Socket.IO Server]
+    Socket -->|Save to DB| DB[(PostgreSQL)]
+    
+    %% Offline Flow
+    Client -->|Offline: Connection Lost| Queue[MMKV Local Outbox]
+    Queue -->|Queue Message| Queue
+    
+    %% Reconnection Recovery Flow
+    Client -->|Connection Restored| Sync[Reconnection Sync]
+    Sync -->|1. Sync Outbox Queue| ExpressSync[Express: /api/chat/sync]
+    ExpressSync -->|Save to DB| DB
+    ExpressSync -->|Broadcast Chat| Socket
+    
+    Sync -->|2. Catch-up Missed Logs| ExpressCatch[Express: /api/chat/:id/messages]
+    ExpressCatch -->|Fetch Missed Logs| DB
+    ExpressCatch -->|Merge & Deduplicate| Client
 ```
 
 ### 3. Asynchronous Automation Pipeline (n8n Webhook Architecture)
