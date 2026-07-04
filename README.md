@@ -42,7 +42,7 @@ graph TD
     Client[Client App] -->|Online: Socket.IO| Socket[Socket.IO Server]
     Socket -->|Save| DB[(PostgreSQL)]
     Client -->|Offline| Outbox[MMKV Outbox]
-    Outbox -->|On Reconnect: Sync| Sync[/api/chat/sync]
+    Outbox -->|On Reconnect: Sync| Sync["/api/chat/sync"]
     Sync -->|Save| DB
     Sync -->|Broadcast| Socket
 ```
@@ -51,7 +51,7 @@ graph TD
 ```mermaid
 graph LR
     Express[Express Backend] -->|Asynchronous Webhook| n8n[n8n Automation]
-    n8n -->|Viewer Milestones & Digests| Notifications[Creator/Viewer Notifications]
+    n8n -->|Viewer Milestones & Digests| Notifications["Creator/Viewer Notifications"]
     n8n -->|Process Highlights| DB[(PostgreSQL)]
 ```
 
@@ -98,6 +98,8 @@ buildai/
 
 ## Setup & Running Locally
 
+Because this live-broadcasting application utilizes native WebRTC tracks (`@livekit/react-native`) and high-performance JSI caching (`react-native-mmkv`), it contains native binaries and **cannot** run on the standard Expo Go client app. It must be compiled and built locally on a simulator/emulator or a physical debug device.
+
 ### 1. Start Infrastructure
 Start the Redis and n8n services:
 ```bash
@@ -105,7 +107,7 @@ docker compose up -d
 ```
 
 ### 2. Run Backend
-Initialize database schema and run server:
+Initialize the database schema and run the Express server:
 ```bash
 cd backend
 npm install
@@ -113,10 +115,27 @@ npx prisma db push
 npm run dev
 ```
 
-### 3. Run Mobile App
-Start the Metro bundler:
+### 3. Build & Run Mobile App
+Install dependencies and build the custom development client binary:
 ```bash
 cd mobile
 npm install
-npm run start
+```
+
+- **For Android (Emulator/Device)**:
+  Make sure an emulator is running or a physical device is connected in debug mode:
+  ```bash
+  npm run android
+  ```
+- **For iOS (Mac only, Simulator)**:
+  Make sure Xcode and CocoaPods are installed, then run:
+  ```bash
+  npm run ios
+  ```
+
+#### USB Port Forwarding (For physical Android devices)
+If running on a physical Android device, run the following `adb` port-reversing commands so your phone can communicate with the local host services:
+```bash
+adb reverse tcp:8081 tcp:8081   # Metro Packager Port
+adb reverse tcp:3001 tcp:3001   # Express Backend Port
 ```

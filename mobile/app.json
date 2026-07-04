@@ -36,6 +36,11 @@
     },
     "plugins": [
       "@livekit/react-native-expo-plugin"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "d9b10626-d4f8-4541-8249-83d97a832c68"
+      }
+    }
   }
 }
