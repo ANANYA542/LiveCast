@@ -1,855 +1,634 @@
-# BuildAI LiveCast — Conversation Prompt History
+# BuildAI LiveCast — Prompt History
 
-This document compiles the chronological sequence of prompts and instructions provided to the AI coding assistant during the engineering and build of the LiveCast platform.
+This document is a chronological record of the prompts I used while building the LiveCast platform for the BuildableLabs Wildcard Generalist Engineer assignment. I used an AI coding assistant throughout the 48-hour build. The prompts below reflect how I approached each problem — starting from understanding the assignment and system design, through implementation, debugging on a physical Android device, and production hardening.
 
-## Prompt 1
 
-```text
-<USER_REQUEST>
-Master Audit Verification Checklist
-Based on the production-readiness audit you provided, here is the exact, granular checklist you need to run through your codebase and manual testing environment.
 
-Do not just read this—open your code editor and your app side-by-side and physically verify every single item below.
+---
 
-🔴 Phase A: Critical Backend Fixes (Code Inspection)
-1. Prisma Connection Pool Leak
-File to Check: backend/src/middleware/identity.ts (or wherever your auth middleware lives).
-What to look for: Search for new PrismaClient().
-PASS Condition: You must see import { prisma } from "../config/db"; (or your equivalent shared instance path). There should be zero instances of instantiating Prisma directly in middleware or routes.
-2. Milestone Iteration Order (Descending)
-Files to Check: chatHandlers.ts (or wherever Redis viewer tracking happens) and webhooks.ts.
-What to look for: Find the array of milestones.
-PASS Condition: The array must strictly be [1000, 500, 100, 50, 3]. If it is [3, 50, 100...], it is broken. The logic must loop through this array and break on the first match where currentCount >= milestone.
-3. Stale Redis Milestone Flags Cleanup
-File to Check: streamService.ts inside the endStream() function.
-What to look for: After the DB status is updated to ENDED, look for Redis deletion calls.
-PASS Condition: You must see a loop or series of commands like redis.del(stream:${id}:milestone_1000_sent), redis.del(stream:${id}:milestone_500_sent), etc., for all 5 milestones. If these aren't cleared, a reused stream ID (or testing the same ID twice) will silently swallow milestones.
-🟡 Phase B: n8n Workflow Corrections (UI & JSON Inspection)
-Open your n8n workflows (either in the n8n UI or by opening the exported .json files in your code editor).
+## Phase 0 — Understanding the Assignment & System Design
 
-4. Relative Timestamps in Highlights
-Workflow: stream-end-highlights.json
-What to look for: Look at the Webhook node payload expectations, and the Code node output.
-PASS Condition:
-The backend must be sending streamStartedAt (an ISO date stri
-<truncated 4550 bytes>
-i-Fi.
-Type 3 messages. See 🕐 icons.
-Turn Wi-Fi ON for 2 seconds, then OFF again.
-Turn Wi-Fi ON for 2 seconds, then OFF again.
-Turn Wi-Fi ON permanently.
-Result: The 3 messages should sync exactly ONCE. The exponential backoff should prevent a flood of requests. No duplicate messages should appear in the chat UI.
- Message Deduplication on Reconnect:
-Viewer is in stream.
-Turn off Wi-Fi (misses messages 4, 5, 6).
-While offline, type message 7 (queued locally).
-Turn Wi-Fi on.
-Result: The catchUpMessages function should fetch 4, 5, 6 from the server. The offline sync should push 7. The UI must merge these and sort them chronologically without duplicating 7.
-Final Sign-Off
-Once you have physically checked every box above, you are no longer submitting a "48-hour hackathon project." You are submitting a production-hardened system.
+### Prompt 01 — Deconstructing the Assignment
 
-If you find any discrepancies while running this audit (e.g., "Oh wait, I forgot to add the IF node to the highlights workflow"), fix them, commit the code with a message like fix: add empty-chat guard to n8n highlight workflow, and you are ready to record your demo and submit. tell me step by step in detail on how to verify it all
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T18:03:21+05:30.
+```
+Before I write a single line of code, I need to understand the full picture of what's being asked.
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/mobile/services/socket.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/services/livekitService.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/middleware/identity.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/mobile/tsconfig.json (LANGUAGE_UNSPECIFIED)
-</ADDITIONAL_METADATA>
-<USER_SETTINGS_CHANGE>
-The user changed setting `Model Selection` from None to Gemini 3.5 Flash (Medium). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
-</USER_SETTINGS_CHANGE>
+The assignment says: "Real-Time Live Event Broadcasting System" — Creator broadcasts video, viewers watch with chat, n8n handles notifications. Three phases: Streaming, Offline sync, Automation.
+
+I know roughly how WebRTC works (the SFU receives the publisher track and fans it out to subscribers), and I know Socket.IO is for real-time bidirectional events. But I need you to break this down architecturally:
+
+1. Where does LiveKit fit in this? Is it just a hosted SFU, or does it also handle room management, token auth, etc.? I've seen their docs mention AccessToken and RoomServiceClient — what's the boundary between what LiveKit handles and what my Express backend handles?
+
+2. For chat — should I use LiveKit's data channels or a separate Socket.IO connection? My instinct says Socket.IO because I need to persist messages to Postgres and do offline queuing later, and data channels are unreliable for that. Am I right?
+
+3. For viewer counting — if I just do +1/-1 in Postgres on join/leave, network flaps will cause race conditions and possibly negative counts. What's the right data structure here?
+
+4. What does n8n actually do in this architecture? Is it like a Zapier where I fire HTTP webhooks and it runs workflows? I've never used it.
+
+Don't generate any code yet. Just help me build the mental model.
 ```
 
-## Prompt 2
+### Prompt 02 — Tech Stack Decisions & Tradeoffs
 
-```text
-<USER_REQUEST>
-remov eall the added by antigravity things from ~/.zshrc i don't think they are needed if u need somethin gi will add them on my own
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T18:17:26+05:30.
+```
+Okay so the architecture is clearer now. Let me lay out the tech stack I'm thinking and you tell me if I'm overcomplicating anything given the 48-hour deadline:
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/backend/prisma/schema.prisma (LANGUAGE_UNSPECIFIED)
-- /Users/ananya/Desktop/buildai/mobile/hooks/useChat.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/n8n-workflows/stream-end-highlights.json (LANGUAGE_JSON)
-- /Users/ananya/Desktop/buildai/backend/src/routes/streams.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/utils/n8n.ts (LANGUAGE_TYPESCRIPT)
-</ADDITIONAL_METADATA>
+- Backend: Express + TypeScript + Prisma (I've used this combo before)
+- Database: PostgreSQL (hosted on Render so I don't waste time with local Docker Postgres)
+- Cache/Presence: Redis for viewer sets and rate limiting
+- WebRTC: LiveKit Cloud (they have a free tier, I'll use livekit-server-sdk on backend for token generation)
+- Mobile: Expo + React Native with @livekit/react-native for the video player
+- Chat transport: Socket.IO (separate from LiveKit)
+- Offline storage: react-native-mmkv (I've heard it's way faster than AsyncStorage since it uses JSI)
+- Automation: n8n running in Docker locally
+
+My original thought was to use BullMQ for job queues and Redis Pub/Sub for chat fanout, but I think that's overkill for a 48-hour build. The assignment just says "real-time chat" — Socket.IO rooms should handle that without needing a pub/sub layer. And BullMQ is only useful if I need delayed retries at scale, which I don't right now. Am I wrong? Challenge me if there's something I'm missing.
+
+Also — should I run Postgres locally in Docker or just use the Render hosted instance? I'm leaning toward Render so I don't have to deal with Docker networking issues.
 ```
 
-## Prompt 3
+### Prompt 03 — Data Flow: Creator Goes Live
 
-```text
-<USER_REQUEST>
-ananya@Ananyas-MacBook-Pro-3 buildai % cd mobile
-ananya@Ananyas-MacBook-Pro-3 mobile % adb connect 192.168.1.3:36231
-zsh: command not found: adb
-ananya@Ananyas-MacBook-Pro-3 mobile % adb version
-zsh: command not found: adb
-ananya@Ananyas-MacBook-Pro-3 mobile % ls ~/Library/Android/sdk/platform-tools
-adb                     hprof-conv              make_f2fs_casefold      NOTICE.txt              sqlite3
-etc1tool                lib64                   mke2fs                  package.xml
-fastboot                make_f2fs               mke2fs.conf             source.properties
-ananya@Ananyas-MacBook-Pro-3 mobile % nano ~/.zshrc
-ananya@Ananyas-MacBook-Pro-3 mobile % nano ~/.zshrc
-ananya@Ananyas-MacBook-Pro-3 mobile % adb devices
-zsh: command not found: adb
-ananya@Ananyas-MacBook-Pro-3 mobile % ~/Library/Android/sdk/platform-tools/adb version
-Android Debug Bridge version 1.0.41
-Version 36.0.0-13206524
-Installed as /Users/ananya/Library/Android/sdk/platform-tools/adb
-Running on Darwin 25.3.0 (arm64)
-ananya@Ananyas-MacBook-Pro-3 mobile %  echo $PATH
-/Users/ananya/.antigravity-ide/antigravity-ide/bin:/Users/ananya/.antigravity-ide/antigravity-ide/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/opt/homebrew/opt/postgresql@15/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.antigravity/antigravity/bin:/opt/homebrew/opt/ruby@3.1/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/ananya/.rbenv/bin:/Users/ananya/.rbenv/shims:/Users/ananya/.pyenv/versions/3.10.16/bin:/Users/ananya/.antigravity/antigravity/bin:/Users/ananya/.codeium/windsurf/bin:/usr/local/Cellar/pyenv-virtualenv/1.2.4/shims:/Users/ananya/.pyenv/shims:/Users/ananya/.pyenv/bin:/Users/ananya/.nvm/versions/node/v22.21.1/bin:/usr/local/mysql/bin:/usr/local/bin:/usr/local/sbin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/opt/pmk/env/global/bin:/Library/Apple/usr/bin:/Users/ananya/.cargo/bin
-ananya@Ananyas-MacBook-Pro-3 mobile %  help me with this
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T18:20:26+05:30.
+```
+Let's trace the exact data flow for the most critical user journey — when a creator hits "Go Live":
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/n8n-workflows/daily-digest.json (LANGUAGE_JSON)
-- /Users/ananya/Desktop/buildai/backend/src/routes/auth.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/stores/authStore.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/screens/WelcomeScreen.tsx (LANGUAGE_TSX)
-- /Users/ananya/Desktop/buildai/mobile/services/identity.ts (LANGUAGE_TYPESCRIPT)
-</ADDITIONAL_METADATA>
+1. The mobile app calls POST /api/streams to create the stream record. At this point status should be SCHEDULED, no LiveKit room exists yet. Why? Because the creator might fill in the title/description and then back out.
+
+2. When they actually tap "Start Broadcasting", the app calls POST /api/streams/:id/start. The backend should:
+   - Validate the stream is in SCHEDULED state (guard against double-start)
+   - Create the LiveKit room
+   - Generate an AccessToken with canPublish: true for the creator
+   - Set up the Redis viewer set (empty initially)
+   - Fire the n8n stream-started webhook asynchronously
+   - Return the token to the mobile app
+
+3. The mobile app connects to LiveKit using the token and publishes camera/mic tracks.
+
+4. Viewers call POST /api/streams/:id/join, get a token with canPublish: false, canSubscribe: true, and connect.
+
+I need to make sure the creator is NOT counted in the viewer set. The Redis SADD should only happen for users where stream.creatorId !== user.id. Confirm this flow makes sense and point out anything I'm missing.
 ```
 
-## Prompt 4
+---
 
-```text
-<USER_REQUEST>
-give me the port reversing commands and then npx expo run commands
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T18:28:11+05:30.
+## Phase 1 — Project Scaffolding & Infrastructure
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/backend/src/routes/chat.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/socket/chatHandlers.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/screens/CreatorDashboardScreen.tsx (LANGUAGE_TSX)
-- /Users/ananya/Desktop/buildai/n8n-workflows/stream-start-notification.json (LANGUAGE_JSON)
-- /Users/ananya/Desktop/buildai/backend/prisma/schema.prisma (LANGUAGE_UNSPECIFIED)
-</ADDITIONAL_METADATA>
+### Prompt 04 — Docker Compose & Prisma Schema
+
+```
+Let's scaffold the project. I need:
+
+1. A docker-compose.yml with:
+   - Redis 7 Alpine with a healthcheck (redis-cli ping)
+   - n8n latest image on port 5678, connected to my Render Postgres (I'll pass the connection string via environment variables)
+   - No local Postgres container — I'm using the hosted Render instance
+
+2. The Prisma schema. Here's my data model thinking:
+   - User: id, displayName, email (optional, unique), passwordHash, createdAt
+   - Stream: id, creatorId (FK to User), title, description, status (SCHEDULED|LIVE|ENDED), livekitRoomName (unique), peakViewerCount, startedAt, endedAt, scheduledAt, categoryId
+   - ChatMessage: id, streamId, userId, content, clientMessageId (unique — this is the idempotency key for offline sync), isOfflineSync (boolean), clientTimestamp, serverTimestamp
+   - Category: id, name (unique), slug (unique)
+   - Follow: followerId + followingId (compound unique)
+   - Notification: id, userId, type, title, message, read, createdAt
+   - Reminder: userId + streamId (compound unique)
+
+The clientMessageId on ChatMessage is critical — it's how I prevent duplicate inserts when the mobile app retries sync after reconnection. It needs a @unique constraint in Prisma.
+
+Set up the backend with Express + TypeScript using tsx for dev mode. Give me the exact prisma/schema.prisma and docker-compose.yml.
 ```
 
-## Prompt 5
+### Prompt 05 — Singleton Prisma & Redis Setup
 
-```text
-<USER_REQUEST>
-ananya@Ananyas-MacBook-Pro-3 mobile % # Reverse Metro bundler port
-adb reverse tcp:8081 tcp:8081
+```
+I need a config/db.ts that exports a singleton PrismaClient and a Redis client. Important:
 
-# Reverse Express Backend / Socket.IO port
-adb reverse tcp:3001 tcp:3001
+1. The PrismaClient must be instantiated ONCE and exported. I do NOT want to see new PrismaClient() in any middleware or route handler — that causes connection pool leaks. Every file should import { prisma } from "../config/db".
 
-zsh: command not found: #
-adb: more than one device/emulator
-zsh: command not found: #
-adb: more than one device/emulator
-ananya@Ananyas-MacBook-Pro-3 mobile % adb reverse tcp:8081 tcp:8081
-adb: more than one device/emulator
-ananya@Ananyas-MacBook-Pro-3 mobile % adb devices
-List of devices attached
-192.168.1.3:36231       device
-adb-10ME8MFBX900038-R5wcPG._adb-tls-connect._tcp        device
+2. For Redis — I want a fallback. If Redis isn't running (like when someone clones the repo without Docker), the backend should still work with an in-memory mock that implements the same interface (get, set, del, sadd, srem, scard, incr, expire, ping). This way development isn't blocked.
 
-ananya@Ananyas-MacBook-Pro-3 mobile % 
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T18:28:56+05:30.
-
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/mobile/screens/ProfileScreen.tsx (LANGUAGE_TSX)
-- /Users/ananya/Desktop/buildai/backend/src/socket/index.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/routes/webhooks.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/android/build.gradle (LANGUAGE_GRADLE)
-- /Users/ananya/Desktop/buildai/mobile/package.json (LANGUAGE_JSON)
-</ADDITIONAL_METADATA>
+3. The Redis connection should have a short connectTimeout (1500ms) and retryStrategy that returns null so it fails fast instead of hanging.
 ```
 
-## Prompt 6
+---
 
-```text
-<USER_REQUEST>
-there is no input box for filling in the category in the live setup page in frontend please fix it make that page exactly like this along with also make the profile page of the users exactly like this in which user can switch between viewer mode and creator mode should look exactly like this and make sure everything in the frontend is well connected to the backend
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T18:35:25+05:30.
+## Phase 2 — LiveKit Integration (First Time)
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/backend/src/routes/streams.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/utils/n8n.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/services/streamService.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/constants/Theme.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/services/api.ts (LANGUAGE_TYPESCRIPT)
-</ADDITIONAL_METADATA>
+### Prompt 06 — LiveKit Token Generation
+
+```
+I've never used the livekit-server-sdk package before. Looking at their npm page, I see they export AccessToken and RoomServiceClient.
+
+I need a services/livekitService.ts that:
+1. Generates participant tokens using AccessToken. The grant object needs roomJoin: true, room: roomName, canPublish (true for creator, false for viewer), and canSubscribe: true for everyone.
+2. Has a deleteRoom function using RoomServiceClient — this is for when the creator ends the stream, I want to forcefully disconnect all participants.
+
+One thing I noticed in their docs — the RoomServiceClient expects an HTTP URL, but my LIVEKIT_URL env var uses wss://. I need to sanitize that: replace ws:// with http:// and wss:// with https://. Handle this in the service file.
+
+Also — the token needs to be converted to JWT with await token.toJwt(). Make sure it's async.
 ```
 
-## Prompt 7
+### Prompt 07 — Camera Preview Before Going Live
 
-```text
-<USER_REQUEST>
-make this vieweer dashboard attatched in the first picture and in the second picture is the creators dashboard enable creators to even schedule there lives so you have to update the frontend and backend both for it accordingly and make sure all the features that are seen here works as integrated to the backend as well and also on clicking the automations button the page attatched in the 3rd picture to be seen and should be perfectly integrated with the backend n8n workflows as well and in the fourth picture i have attatched the creator notification panel we will be testing everything in detail later right now just fix this and make sure everything does work seemlessly and in the fourth picture i have attatche how the viewer notfication system shoulld look like as of now for notifications lets keep it simple and mention in the readme about using redis and bull mq furthur on larger scales also make sure you don't hard code anything on frontend part everything should be perfectly connected with the backend and should be working
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T18:54:21+05:30.
+```
+Before the creator actually goes live, I want to show a camera preview on the CreatorScreen. The flow should be:
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/backend/src/routes/auth.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/stores/authStore.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/screens/WelcomeScreen.tsx (LANGUAGE_TSX)
-- /Users/ananya/Desktop/buildai/mobile/services/identity.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/app.json (LANGUAGE_JSON)
-</ADDITIONAL_METADATA>
+1. When the screen mounts, initialize a local video track using the @livekit/react-native SDK
+2. Show the preview in a VideoView component
+3. The creator fills in title, category, etc.
+4. When they tap "Go Live", THEN we call the backend to create + start the stream, get the token, and connect to the LiveKit room
+
+The key thing is: the camera preview should work WITHOUT connecting to any LiveKit room. It's purely local track creation. I think the API is something like createLocalVideoTrack() from livekit-client, but I'm not sure how it works in React Native specifically. The @livekit/react-native package might need registerGlobals() called first.
+
+Also implement a camera flip button (front/back toggle).
 ```
 
-## Prompt 8
+### Prompt 08 — Stream State Machine Guards
 
-```text
-<USER_REQUEST>
-remove the explore button from the bottom of the navbar keep only the things that are coming from the backend in the profile part lets not overcomplicate anything and then we will move forward to test if our n8n workflows are working or not
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T19:04:03+05:30.
+```
+I need to implement proper state machine guards in streamService.ts for the stream lifecycle:
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/backend/src/routes/chat.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/socket/chatHandlers.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/screens/CreatorDashboardScreen.tsx (LANGUAGE_TSX)
-- /Users/ananya/Desktop/buildai/n8n-workflows/stream-start-notification.json (LANGUAGE_JSON)
-- /Users/ananya/Desktop/buildai/backend/prisma/schema.prisma (LANGUAGE_UNSPECIFIED)
-</ADDITIONAL_METADATA>
+SCHEDULED → LIVE → ENDED
+
+The guards I need:
+1. startStream: If stream.status === "LIVE", throw "Stream is already live." If stream.status === "ENDED", throw "Cannot restart a stream that has already ended." Only SCHEDULED streams can transition to LIVE.
+
+2. endStream: If stream.status === "SCHEDULED", throw "Cannot end a stream that has not started yet. Call /start first." If stream.status === "ENDED", throw "Stream has already ended." Only LIVE streams can transition to ENDED.
+
+3. On end, read the peak viewer count from Redis (key: peak_viewers:{streamId}) before deleting the Redis keys.
+
+4. On end, delete the LiveKit room, clean up the Redis viewer set, peak counter, AND all milestone flags (stream:{id}:milestone_3_sent, etc. for all 5 thresholds).
+
+Return appropriate HTTP 409 Conflict responses from the routes when state violations occur.
 ```
 
-## Prompt 9
+---
 
-```text
-Comments on artifact URI: file:///Users/ananya/.gemini/antigravity-ide/brain/026f4f98-a533-4b7b-a033-28ebea00ba6a/implementation_plan.md
+## Phase 3 — Real-Time Chat & Viewer Tracking
 
-The user has approved this document.
+### Prompt 09 — Socket.IO Room Architecture
 
+```
+Set up the Socket.IO server and chat handler. Here's how I want the room architecture:
 
-<USER_REQUEST>
+1. Socket.IO middleware: Extract userId and displayName from socket.handshake.auth. Reject connection if missing.
 
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T19:04:56+05:30.
+2. Events I need:
+   - room:join — joins the Socket.IO room for that streamId, adds user to Redis viewer set (SADD viewers:{streamId} userId), computes SCARD, broadcasts viewer_count to the room
+   - room:leave — leaves room, SREM from viewer set, broadcast updated count
+   - disconnect — automatic cleanup, same as room:leave but triggered by connection drop
+   - chat:message — receive message, validate, rate limit, save to DB, broadcast chat:new_message to room
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/mobile/hooks/useChat.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/n8n-workflows/stream-end-highlights.json (LANGUAGE_JSON)
-- /Users/ananya/Desktop/buildai/backend/src/routes/streams.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/utils/n8n.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/services/streamService.ts (LANGUAGE_TYPESCRIPT)
-</ADDITIONAL_METADATA>
+3. IMPORTANT: On room:join, the creator (stream.creatorId === user.id) should NOT be added to the viewer set. They're broadcasting, not viewing. But they should still join the Socket.IO room so they can see chat messages.
+
+4. Also on room:join, compute and track peak viewer count. If current SCARD > stored peak, update peak_viewers:{streamId} in Redis.
 ```
 
-## Prompt 10
+### Prompt 10 — Redis Rate Limiter for Chat
 
-```text
-<USER_REQUEST>
-remove all the parts that you have hard coded on the mobile frontend part every bit of it everything should work seemlessly and come from the backend itself
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T19:24:09+05:30.
+```
+I need a rate limiter in the chat:message handler to prevent spam. Here's what I want:
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/mobile/app.json (LANGUAGE_JSON)
-- /Users/ananya/Desktop/buildai/backend/src/index.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/package.json (LANGUAGE_JSON)
-- /Users/ananya/Desktop/buildai/backend/src/utils/crypto.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/App.tsx (LANGUAGE_TSX)
-</ADDITIONAL_METADATA>
+Use Redis INCR on a key like rate_limit:{streamId}:{userId}. On count === 1, set EXPIRE to 5 seconds. If count > 3, emit a chat:error with reason "rate_limited" and drop the message.
+
+This gives us max 3 messages per 5-second window per user. The window auto-resets when the key expires.
+
+Add a debug log line that prints the current count so I can verify during testing: 
+console.log(`[Rate Limiter Debug]: user=${user.displayName} key=${rateLimitKey} count=${count}`)
+
+Also add validation: reject empty content, reject content over 500 chars, and check if the stream status is ENDED before allowing messages through.
 ```
 
-## Prompt 11
+### Prompt 11 — Viewer Milestone Alerts with Anti-Spam
 
-```text
-<USER_REQUEST>
-on the creators dashboard the view analythics past streams manage followers buttton are not working firstly fix that and still the audit user the upcoming events part all the noticfication part these are all hard coded soo fix that refine the frontend remove parts whose backend connection can't be seen and notification should be triggred on every follow you get on number of people visited your stream and for viewers who got live when like these so formulate it accordingly
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T19:33:18+05:30.
+```
+When the viewer count crosses certain thresholds (3, 50, 100, 500, 1000), I want to:
+1. Fire the n8n viewer-milestone webhook
+2. Create a notification record in Postgres for the creator
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/backend/src/routes/chat.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/backend/src/socket/chatHandlers.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/screens/CreatorDashboardScreen.tsx (LANGUAGE_TSX)
-- /Users/ananya/Desktop/buildai/n8n-workflows/stream-start-notification.json (LANGUAGE_JSON)
-- /Users/ananya/Desktop/buildai/backend/prisma/schema.prisma (LANGUAGE_UNSPECIFIED)
-</ADDITIONAL_METADATA>
+But the problem is — every new viewer triggers room:join, which recomputes SCARD. If 101 people join, the milestone fires for viewer 101, but also for viewer 102, 103... unless I prevent it.
+
+Solution: Use Redis flags. Key pattern: stream:{streamId}:milestone_{m}_sent with a 24-hour TTL.
+
+CRITICAL: The milestones array must be checked in DESCENDING order: [1000, 500, 100, 50, 3]. Loop through, and break on the first match. If the count is 500, I want to fire the 500 milestone, not the 3, 50, AND 100 milestones.
+
+Check the flag before firing. If already sent, skip. If not sent, set the flag and fire. Break after the first match.
+
+These flags need to be cleaned up in endStream() — delete all 5 milestone keys for the stream.
 ```
 
-## Prompt 12
+---
 
-```text
-<USER_REQUEST>
-now first tell me in detail how to test the n8n workflows part then we will be testing phase 2 in detail and then the first phase then we will be circulating around the entire readme.md polishing it like a story
-BuildableLabs - Wildcard Generalist
-Engineer
-Time Limit: 48 hours
+## Phase 4 — Offline Synchronization (Phase 2 of Assignment)
 
-Assignment: Real-Time Live Event Broadcasting
-System
-Build: A live streaming platform where creators broadcast video, viewers watch with chat,
-and n8n automation handles notifications.
-Quick Version:
-● Phase 1 (Mobile + Backend): Creator streams, viewers watch, chat syncs
-● Phase 2 (Offline): Queue chat locally, sync when online
-● Phase 3 (Automation): n8n notifies followers, detects trends, generates highlights
-What You're Building
-Creator (Mobile App):
-● Start live stream
-● See live viewer count
-● Read viewer chat
-● End stream
-Viewer (Mobile App):
-● Browse streams
-● Join and watch video
-● Send chat messages
-● See viewer count
-Automation (n8n):
-● Stream starts → notify followers
-● Viewer count > 100 → alert creator
-● Stream ends → generate highlights
-● Daily digest of top streams
+### Prompt 12 — MMKV Outbox Pattern
 
-Backend:
-● Real-time video + chat sync
-● Concurrent viewer tracking
-● Offline support (queue chat, sync when online)
+```
+This is the offline resilience implementation. Here's the architecture I want:
 
-What to Build
-Phase 1 (Streaming):
-● Creator app: Start/end stream
-● Viewer app: Join, watch video
-● Real-time viewer count
-● Basic chat (messages first go through this entire thing and let me know if any part is remaining or not
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T19:44:21+05:30.
+Mobile side:
+1. services/storage.ts — instantiate MMKV with id "buildai-app-storage", export AppStorage helpers and StorageKeys constants
+2. services/outbox.ts — OutboxService with getQueue(), enqueue(msg), dequeue(sentIds), clearQueue(). The queue is stored as a JSON-serialized array in MMKV under the key "offline_chat_outbox".
 
-The user's current state is as follows:
-Other open documents:
-- /Users/ananya/Desktop/buildai/backend/src/routes/webhooks.ts (LANGUAGE_TYPESCRIPT)
-- /Users/ananya/Desktop/buildai/mobile/android/build.gradle (LANGUAGE_GRADLE)
-- /Users/ananya/Desktop/buildai/mobile/package.json (LANGUAGE_JSON)
-- /Users/ananya/Desktop/buildai/mobile/screens/BrowseScreen.tsx (LANGUAGE_TSX)
-- /Users/ananya/Desktop/buildai/ARCHITECTURE.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+In useChat.ts sendMessage():
+1. Generate a clientMessageId like msg-{userId.slice(0,5)}-{Date.now()}-{random6chars}
+2. Optimistically add the message to local state with pending: true
+3. Check if online (NetInfo) — if offline, call OutboxService.enqueue() and return
+4. If online, emit via Socket.IO
+
+On reconnection (NetInfo listener detects online + socket reconnect):
+1. Flush the outbox via a batch POST /api/chat/sync endpoint
+2. Use exponential backoff for retries: 1s, 2s, 4s, 8s, max 16s
+3. On success, dequeue the synced IDs from MMKV and resolve the optimistic UI (set pending: false)
 ```
 
-## Prompt 13
+### Prompt 13 — Idempotent Sync Endpoint & Duplicate Prevention
 
-```text
-<USER_REQUEST>
-first i want you to make sure for part 2 if the net is getting of or the server is getting discoonnect a pop up off u r offline is coming and once back online the one of back online is there  and also remove all the emojis from readme .md make it to the point add diagrams clearly define the project structure tech used the architectural apprach diagram and list of features implemented 
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T19:50:33+05:30.
+```
+The batch sync endpoint POST /api/chat/sync needs to handle duplicates gracefully. Here's the scenario:
 
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-Cursor is on line: 1
-Other open documents:
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+1. User goes offline, queues 5 messages
+2. Network flaps — comes back for 2 seconds, sync fires, sends all 5
+3. Network drops again before the response comes back
+4. Network comes back again, sync fires AGAIN with the same 5 messages
+
+Without idempotency, I'd get 10 rows in the database. The solution:
+
+In ChatService.saveMessage() and ChatService.syncMessages():
+- Before inserting, check if a ChatMessage with that clientMessageId already exists (it has a @unique constraint in Prisma)
+- If it exists, return the existing record instead of inserting a duplicate
+- This makes the endpoint naturally idempotent
+
+For the sync endpoint specifically:
+- Accept an array of messages
+- Loop through each one, check existence, insert if new
+- Return the full list of synced/existing records so the client can resolve its optimistic UI
+
+Also implement catch-up on reconnection: when the socket reconnects, fetch GET /api/chat/:streamId/messages?since={lastTimestamp} to get any messages the user missed while offline. Merge with local state, deduplicate by clientMessageId, sort chronologically.
 ```
 
-## Prompt 14
+### Prompt 14 — Network Status Toast Overlays
 
-```text
-The USER performed the following action:
-Show the contents of file /Users/ananya/Desktop/buildai/README.md from lines 105 to 142
-File Path: `file:///Users/ananya/Desktop/buildai/README.md`
-Total Lines: 209
-Total Bytes: 11920
-Showing lines 105 to 142
-The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
-105: 
-106: ### 📋 Prerequisites & Infrastructure
-107: 
-108: 1. **Spin up Docker Containers**:
-109:    ```bash
-110:    docker compose up -d
-111:    ```
-112:    *Verify Postgres is running on port `5432`, Redis on `6379`, and n8n on `5678`.*
-113: 
-114: 2. **Backend Setup**:
-115:    ```bash
-116:    cd backend
-117:    npm install
-118:    npx prisma db push    # Sync schemas safely
-119:    npm run dev
-120:    ```
-121: 
-122: 3. **Mobile Client**:
-123:    ```bash
-124:    cd mobile
-125:    npm install
-126:    npm run start
-127:    ```
-128:    *Press `i` for iOS Simulator, `a` for Android Emulator, or scan the QR code to run on a physical device.*
-129: 
-130: ---
-131: 
-132: ### 🧪 Step 1: Testing n8n Automations (Phase 3)
-133: 
-134: 1. **Import Workflows into n8n**:
-135:    - Open n8n at `http://localhost:5678`.
-136:    - Go to **Credentials** -> **Add Credential** -> **PostgreSQL**.
-137:    - Input your database details (Host: `host.docker.internal` or your local IP, Port: `5432`, Database: `buildai`, User: `postgres`, Password: `postgres`). Name the credential **`Postgres Database Connection`**.
-138:    - Import the JSON files from the `/n8n-workflows` folder:
-139:      - `stream-start-notification.json`
-140:      - `viewer-milestone-alert.json`
-141:      - `stream-end-highlights.json`
-142:      - `daily-digest.json`
+```
+I need global toast notifications that show when the device goes offline and when it comes back online. The design:
+
+1. A floating red banner at the top: "Connection Lost: You are offline" — shows when NetInfo reports isConnected === false
+2. A floating green banner: "Connection Restored: Back Online" — shows briefly when connection comes back, then auto-hides after 3 seconds
+
+These should be global (in App.tsx), not per-screen. Use NetInfo.addEventListener to watch for changes. The toasts should be absolute-positioned so they overlay on top of whatever screen is active.
+
+Also — the banner should trigger the outbox sync when connection is restored. If we have queued messages in MMKV, flush them as soon as the green banner shows.
 ```
 
-## Prompt 15
+---
 
-```text
-<USER_REQUEST>
-help me commit the changes in a series of commits of around 8-9 just give me the list of git add and git commit messages 
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T20:00:52+05:30.
+## Phase 5 — n8n Automation (First Time Using n8n)
 
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 20
-Other open documents:
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+### Prompt 15 — n8n Setup & Webhook Architecture
+
+```
+I've never used n8n before so walk me through this:
+
+1. My docker-compose.yml already has n8n on port 5678. I need 4 workflows:
+   - stream-start-notification: Triggered when creator goes live, notifies followers
+   - viewer-milestone-alert: Triggered when viewer count crosses thresholds
+   - stream-end-highlights: Triggered when stream ends, generates highlight data
+   - daily-digest: Cron job, compiles top streams daily
+
+2. How do I trigger these from the backend? I'm thinking fire-and-forget HTTP POSTs from Express to n8n webhook URLs. The n8n webhook node gives me a URL like http://localhost:5678/webhook/stream-started, right?
+
+3. I want the backend to NOT block or hang if n8n is slow or down. So the HTTP calls should be async with a short timeout (4 seconds) and catch errors silently. Create a utils/n8n.ts with helper functions:
+   - n8nTriggers.streamStarted(data) 
+   - n8nTriggers.streamEnded(data)
+   - n8nTriggers.viewerMilestone(data)
+
+Each one does axios.post() with timeout: 4000 and .catch() that logs the error but doesn't throw.
+
+4. For the stream-end-highlights workflow, the backend needs to send: streamId, creatorId, peakViewers, durationSeconds (computed from startedAt to endedAt), and streamStartedAt (ISO string). The n8n Code node will use the startedAt to compute relative offsets for the highlight timestamps.
 ```
 
-## Prompt 16
+### Prompt 16 — Sliding Window Highlight Algorithm for n8n
 
-```text
-The USER performed the following action:
-Show the contents of file /Users/ananya/Desktop/buildai/docker-compose.yml from lines 1 to 32
-File Path: `file:///Users/ananya/Desktop/buildai/docker-compose.yml`
-Total Lines: 32
-Total Bytes: 891
-Showing lines 1 to 32
-The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
-1: services:
-2:   redis:
-3:     image: redis:7-alpine
-4:     container_name: buildai-redis
-5:     ports:
-6:       - "6379:6379"
-7:     healthcheck:
-8:       test: ["CMD", "redis-cli", "ping"]
-9:       interval: 5s
-10:       timeout: 5s
-11:       retries: 5
-12: 
-13:   n8n:
-14:     image: n8nio/n8n:latest
-15:     container_name: buildai-n8n
-16:     ports:
-17:       - "5678:5678"
-18:     environment:
-19:       - N8N_BASIC_AUTH_ACTIVE=false
-20:       - WEBHOOK_URL=http://localhost:5678/
-21:       - DB_TYPE=postgresdb
-22:       - DB_POSTGRESDB_HOST=dpg-d934mbe7r5hc73a53vc0-a.ohio-postgres.render.com
-23:       - DB_POSTGRESDB_PORT=5432
-24:       - DB_POSTGRESDB_DATABASE=live_event_broadcasting_system
-25:       - DB_POSTGRESDB_USER=live_event_broadcasting_system_user
-26:       - DB_POSTGRESDB_PASSWORD=hzXc8AtR4HQigVNQ8Nu6UjpjWezJ8e06
-27:       - DB_POSTGRESDB_SSL=true
-28:       - DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false
-29:     depends_on:
-30:       redis:
-31:         condition: service_healthy
-32:
+```
+The stream-end-highlights workflow needs to find the peak chat activity moment. Here's the problem with fixed time buckets:
+
+If I split chat timestamps into 30-second buckets (0:00-0:30, 0:30-1:00, etc.), and the actual activity spike happens at 0:25-0:35, it gets split across two buckets and neither bucket looks like the peak.
+
+Instead, use a sliding window approach in the n8n Code node:
+
+1. Query all ChatMessage rows for the stream from Postgres
+2. If zero messages, output a default highlight with "No chat activity" and skip processing
+3. For each message timestamp Ti, count how many messages fall within [Ti - 15s, Ti + 15s] — a 30-second sliding window centered on Ti
+4. The message with the highest surrounding density is the peak moment
+5. Convert the peak timestamp to a relative offset from streamStartedAt (in seconds)
+6. Save a StreamHighlight record with: summary, peakViewers, totalMessages, durationSeconds
+
+I also need an IF node before the Code node that checks whether totalMessages > 0. If the stream ended with zero chat, skip the highlight generation entirely and just save a basic summary.
 ```
 
-## Prompt 17
+### Prompt 17 — Daily Digest Cron Workflow
 
-```text
-<USER_REQUEST>
-ananya@Ananyas-MacBook-Pro-3 buildai % git status
-On branch master
-Your branch is up to date with 'origin/master'.
+```
+The daily-digest workflow should:
+1. Be triggered by a Cron node (n8n Schedule Trigger) at 5:00 AM daily
+2. Query the top 10 streams from the last 24 hours ordered by peakViewerCount DESC
+3. For each stream, fetch the creator's displayName
+4. Format it as a digest notification
+5. Simulate sending it (in production this would go to email/push, for now just write to the database)
 
-Changes not staged for commit:
-  (use "git add/rm <file>..." to update what will be committed)
-  (use "git restore <file>..." to discard changes in working directory)
-        deleted:    ARCHITECTURE.md
-        modified:   backend/package.json
-        modified:   backend/src/routes/auth.ts
-
-Untracked files:
-  (use "git add <file>..." to include in what will be committed)
-        backend/package-lock.json
-        backend/prisma/migrations/
-        backend/src/verify_audit.ts
-        mobile/android/
-        mobile/app.json
-        mobile/assets/
-        mobile/babel.config.js
-        mobile/ios/
-        mobile/package-lock.json
- why are these changes not committed?
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T20:09:38+05:30.
-
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 20
-Other open documents:
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-</ADDITIONAL_METADATA>
+Export all 4 workflow JSONs to /n8n-workflows/ so they can be imported on any n8n instance.
 ```
 
-## Prompt 18
+---
 
-```text
-<USER_REQUEST>
-make this diagram simpler and easily understandable it looks way too complicated
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T20:11:37+05:30.
+## Phase 6 — Frontend Screens & Backend Integration
 
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 20
-Other open documents:
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+### Prompt 18 — Browse Screen (Viewer Dashboard)
+
+```
+The BrowseScreen needs to be fully dynamic — no hardcoded data:
+
+1. Category pills at the top — fetched from GET /api/streams/categories. "All" selected by default. Clicking a category should filter all three sections below.
+
+2. "Live Right Now" section — fetched from GET /api/streams?status=LIVE&category={slug}. Show a red LIVE badge, creator name, viewer count.
+
+3. "Upcoming Scheduled" section — fetched from GET /api/streams?status=SCHEDULED&category={slug}. Show scheduled time, "Remind Me" button that toggles a Reminder record via POST /api/streams/:id/reminder.
+
+4. "Recent Lives" section — fetched from GET /api/streams?status=ENDED&category={slug}. These should NOT show a LIVE badge — they're ended. Show peak viewer count and duration.
+
+5. Pull-to-refresh on the whole screen.
+
+Make sure the category filter actually works — when I tap "Music", it should pass the category slug as a query parameter and re-fetch all three sections.
 ```
 
-## Prompt 19
+### Prompt 19 — Creator Dashboard Screen
 
-```text
-<USER_REQUEST>
-how we will be deploying it like we are supposed to submit BuildableLabs - Wildcard Generalist
-Engineer
-Time Limit: 48 hours
+```
+The CreatorDashboardScreen needs:
 
-Assignment: Real-Time Live Event Broadcasting
-System
-Build: A live streaming platform where creators broadcast video, viewers watch with chat,
-and n8n automation handles notifications.
-Quick Version:
-● Phase 1 (Mobile + Backend): Creator streams, viewers watch, chat syncs
-● Phase 2 (Offline): Queue chat locally, sync when online
-● Phase 3 (Automation): n8n notifies followers, detects trends, generates highlights
-What You're Building
-Creator (Mobile App):
-● Start live stream
-● See live viewer count
-● Read viewer chat
-● End stream
-Viewer (Mobile App):
-● Browse streams
-● Join and watch video
-● Send chat messages
-● See viewer count
-Automation (n8n):
-● Stream starts → notify followers
-● Viewer count > 100 → alert creator
-● Stream ends → generate highlights
-● Daily digest of top streams
+1. Stats row at top: Total Streams, Total Viewers, Followers — all from the backend
+2. "My Streams" list — fetched from GET /api/streams?creatorId={userId}, shows status badges
+3. "Go Live" button that navigates to CreatorScreen
+4. "Schedule Stream" modal — title, category dropdown (from API), scheduled time picker. Calls POST /api/streams with scheduledAt.
+5. "View Analytics" button on each stream card — opens a modal showing peak viewers, chat count, duration, highlight data if available
+6. "Manage Followers" section — list of followers from GET /api/users/:id/followers
 
-Backend:
-● Real-time video + chat sync
-● Concurrent viewer tracking
-● Offline support (queue chat, sync when online)
-
-What to Build
-Phase 1 (Streaming):
-● Creator app: Start/end stream
-● Viewer app: Join, watch video
-● Real-time viewer count
-● Basic chat (messages sync across viewers)
-Phase 2 (Offline):
-● Offline support: Queue chat locally
-● Sync when online: Messages in correct order
-● Conflict handling: Offline edits merged properly
-Phase 3 (Automation):
-● n8n workflows
-● Stream starts → notify followers
-● Viewer count milestones → alerts
-● Stream ends → generate highlights
-● Daily digest
-Submit
-1. GitHub repo (/mobile /backend /n8n-workflow)
-2. Prompt sharing (chat link or doc)
-3. n8n workflow export
-4. App 
-5. loom video
-so tell me in detail what are the things that i have to submit do and go through
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T20:13:43+05:30.
-
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 20
-Other open documents:
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+All data from the backend. Zero hardcoded mock data. If the API returns empty, show an empty state message.
 ```
 
-## Prompt 20
+### Prompt 20 — Profile Screen & Notification Alerts
 
-```text
-<USER_REQUEST>
-nanya@Ananyas-MacBook-Pro-3 backend % npm run dev
+```
+Two screens to build:
 
-> buildai-backend@1.0.0 dev
-> tsx watch src/index.ts
+ProfileScreen:
+- Show user avatar (generated from initials), display name, email
+- Creator stats: streams count, total viewers, followers count
+- "My Followers" expandable list
+- "Following" expandable list with unfollow option
+- All data from backend APIs
 
-node:events:497
-      throw er; // Unhandled 'error' event
-      ^
+AlertsScreen (Notifications):
+- Fetch from GET /api/notifications
+- Show unread badge count on the tab bar icon
+- Each notification has: type icon, title, message, timestamp
+- "Mark All Read" button — calls PUT /api/notifications/read-all
+- If offline, queue the mark-all-read action and sync when back online
+- Show offline indicator banner when not connected
+
+Notification types to support:
+- viewer_milestone: "You hit 100 viewers!"
+- stream_started: "User X you follow just went live!"  
+- new_follower: "User Y started following you!"
+```
+
+### Prompt 21 — Automations Screen
+
+```
+Build an AutomationsScreen that shows the n8n workflow statuses. For the MVP, I'll manage the workflow states in our own Postgres database rather than proxying to the n8n API directly (mention in README that production would use n8n's REST API).
+
+Create a new AutomationWorkflow model in Prisma:
+- id, name, description, type (Webhook/Event/Condition/Schedule), status (ACTIVE/PAUSED/FAILED), lastRun, runsToday
+
+Seed 4 records matching our actual workflows:
+1. Stream Start Notification — Webhook type
+2. Viewer Milestone Alert — Event type
+3. Stream End Highlights — Webhook type
+4. Daily Digest — Schedule type
+
+The screen should show cards with toggle switches for ACTIVE/PAUSED, run counts, and last execution time. Toggle calls PATCH /api/automations/:id/toggle.
+```
+
+---
+
+## Phase 7 — Android Device Testing & Debugging
+
+### Prompt 22 — ADB Setup & Port Forwarding
+
+```
+I'm trying to test on my physical Samsung phone but adb isn't in my PATH. I found it at ~/Library/Android/sdk/platform-tools/adb. 
+
+Also when I run adb devices I see two entries:
+- 192.168.1.3:36231 (wireless debug)
+- adb-10ME8MFBX900038-R5wcPG._adb-tls-connect._tcp (USB)
+
+So adb reverse fails with "more than one device/emulator". How do I target a specific device? I think I need the -s flag?
+
+I need to reverse two ports:
+- tcp:8081 for Metro bundler
+- tcp:3001 for my Express backend + Socket.IO
+
+Give me the exact commands.
+```
+
+### Prompt 23 — EADDRINUSE Port 3001
+
+```
+I keep getting this when I restart the backend server:
 
 Error: listen EADDRINUSE: address already in use :::3001
-    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
-    at listenInCluster (node:net:1997:12)
-    at Server.listen (node:net:2102:7)
-    at express (/Users/ananya/Desktop/buildai/backend/src/index.ts:64:8)
-    at Object.<anonymous> (/Users/ananya/Desktop/buildai/backend/src/index.ts:66:2)
-    at Module._compile (node:internal/modules/cjs/loader:1706:14)
-    at Object.transformer (/Users/ananya/Desktop/buildai/backend/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)
-    at Module.load (node:internal/modules/cjs/loader:1441:32)
-    at Function._load (node:internal/modules/cjs/loader:1263:12)
-    at TracingChannel.traceSync (node:diagnostics_channel:328:14)
-Emitted 'error' event on Server instance at:
-    at emitErrorNT (node:net:1976:8)
-    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
-  code: 'EADDRINUSE',
-  errno: -48,
-  syscall: 'listen',
-  address: '::',
-  port: 3001
-}
 
-Node.js v22.21.1
- fix this 
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T21:33:04+05:30.
-
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 20
-Other open documents:
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+What's the fastest way to kill whatever process is holding port 3001? I think it's a zombie node process from a previous tsx watch session that didn't clean up. Give me the one-liner to find and kill it.
 ```
 
-## Prompt 21
+### Prompt 24 — Camera Preview Bug
 
-```text
-<USER_REQUEST>
-remove this audit stream and trending now thing section which is hardcoded on the frontend home also i am enable to see recent lives show that on the homepage instad and if they have ended there signal should not show still live part
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T21:38:53+05:30.
+```
+The camera preview on CreatorScreen is broken. Getting this error:
 
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 20
-Other open documents:
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-</ADDITIONAL_METADATA>
+WARN Failed to start camera preview: [TypeError: Cannot read property 'createCameraTrack' of undefined]
+
+I think the issue is that @livekit/react-native needs registerGlobals() called before any track creation. The native module might not be available in Expo Go — it needs a dev client build.
+
+But actually, for the camera preview I don't even need LiveKit. I can use expo-camera or just handle it through LiveKit's local track API if the native modules are properly linked. What's the right approach here? I'm running on a physical Android device with npx expo run:android.
 ```
 
-## Prompt 22
+---
 
-```text
-<USER_REQUEST>
-also the viewer should be notified when the stream ended immediately reduce the latency that is coming in between also the camera preview thing before going to the live broadcast is not working fix that as well
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T21:41:59+05:30.
+## Phase 8 — Production Hardening & Edge Cases
 
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 20
-Other open documents:
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+### Prompt 25 — Full System Audit Checklist
+
+```
+I want to do a proper audit before submission. Give me a brutally honest checklist to verify every critical path. Specifically:
+
+Backend code inspection:
+1. Prisma connection pool — verify there's ZERO instances of new PrismaClient() outside config/db.ts. Every file must import the singleton.
+2. Milestone array order — must be [1000, 500, 100, 50, 3] descending. If it's ascending, only the 3-viewer milestone fires.
+3. Redis cleanup on stream end — all 5 milestone flags must be deleted. If not, running tests twice on the same stream silently swallows milestones.
+4. Rate limiter — verify the Redis INCR + EXPIRE pattern is correct. The EXPIRE must only be set when count === 1.
+
+n8n workflow inspection:
+5. stream-end-highlights — must have an IF node checking message count > 0 before the Code node
+6. The Code node must receive streamStartedAt to compute relative offsets
+7. daily-digest — cron must be set to 5:00 AM, not midnight
+
+Mobile inspection:
+8. All screens must pull data from backend APIs. Search for any hardcoded arrays or mock data.
+9. The category filter on BrowseScreen must actually re-fetch with the category slug parameter
+10. Ended streams must NOT show a LIVE badge
 ```
 
-## Prompt 23
+### Prompt 26 — Integration Test Script
 
-```text
-<USER_REQUEST>
-also when i am clicking on a particular category the home page is not refreshing accordingly along with it fix that part as well
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T21:44:11+05:30.
+```
+I want an automated test script (verify_audit.ts) that I can run with npx tsx to verify the critical backend paths:
 
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 20
-Other open documents:
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+Test 1: Register with invalid email format → expect 400
+Test 2: Register valid user → expect 201
+Test 3: Register same email again → expect 409 Conflict
+Test 4: Login with wrong password → expect 401 with generic "Invalid credentials" message (not "wrong password" — don't leak which field is wrong)
+Test 5: Login with correct credentials → expect 200
+Test 6: Create stream, start it, try to start it again → expect 409 (state machine guard)
+Test 7: Create stream (SCHEDULED), try to end it without starting → expect 409
+Test 8: Sync same clientMessageId twice via POST /api/chat/sync → verify only 1 row in DB (idempotency)
+Test 9: Open Socket.IO connection, send 10 messages rapidly → verify rate_limited error fires after message 3
+Test 10: End a stream, try to send chat → verify stream_ended error
+
+Run these sequentially with clear PASS/FAIL output.
 ```
 
-## Prompt 24
+### Prompt 27 — Stream End Latency Fix
 
-```text
-<USER_REQUEST>
-the upcoming scheduled streams part is hardcoded and also once clicked on a particular category home page should show the streams under that category only
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T22:35:52+05:30.
+```
+When the creator ends the stream, there's a noticeable delay before the viewer gets kicked out. The viewer should see the stream end instantly.
 
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 32
-Other open documents:
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+Currently the flow is: creator calls POST /api/streams/:id/end → backend updates DB → backend deletes LiveKit room → LiveKit disconnects participants.
+
+The problem is I'm not explicitly broadcasting a stream:ended event via Socket.IO. The viewer only knows the stream ended when the LiveKit connection drops, which has latency.
+
+Fix: In the endStream route, after updating the DB, immediately broadcast stream:ended via Socket.IO to the room BEFORE deleting the LiveKit room. The mobile app should listen for stream:ended and show a "Stream Ended" overlay immediately.
 ```
 
-## Prompt 25
+### Prompt 28 — Category Filter Bug
 
-```text
-<USER_REQUEST>
-› Reloading apps
-Android Bundled 239ms node_modules/expo/AppEntry.js (1 module)
-iOS Bundled 376ms node_modules/expo/AppEntry.js (1 module)
- WARN  Failed to start camera preview: [TypeError: Cannot read property 'createCameraTrack' of undefined]
- WARN  Failed to start camera preview: [TypeError: Cannot read property 'createCameraTrack' of undefined]
- fix the camera preview part it is still not working
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T22:48:52+05:30.
+```
+When I click on a specific category pill on the BrowseScreen (like "Music"), the page isn't filtering. I can see in the code that fetchActiveStreams, fetchUpcomingStreams, and fetchRecentStreams all exist, but the category slug isn't being passed to the API call when a category is selected.
 
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 32
-Other open documents:
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+The state selectedCategory updates correctly on press, but the useEffect that triggers the re-fetch isn't watching selectedCategory in its dependency array. Fix this — the three fetch functions should re-run whenever the selected category changes.
 ```
 
-## Prompt 26
+### Prompt 29 — Remove All Hardcoded Frontend Data
 
-```text
-<USER_REQUEST>
-also make sure that the notification also comes up when someone u follow goes live  and now make sure verything is streamed and integrated well and also give me in detail steps of all the features that we have implemented every single one of them and how to check it accordingly
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-03T22:51:50+05:30.
+```
+I've been going through the app and I'm still seeing hardcoded data in several places:
 
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 32
-Other open documents:
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+1. BrowseScreen — "Trending Now" section with fake stream data
+2. CreatorDashboardScreen — "Upcoming Events" with hardcoded dates
+3. AlertsScreen — some notifications are mock objects instead of coming from the API
+4. ProfileScreen — follower count is sometimes a static number
+
+Search the entire mobile/ directory for any hardcoded arrays, mock data objects, or static placeholder content that should be coming from the backend. Remove all of it and replace with actual API calls. If the backend doesn't have a route for something, either create the route or remove the UI section entirely. No fake data.
 ```
 
-## Prompt 27
+### Prompt 30 — Follow-Based Notifications
 
-```text
-<USER_REQUEST>
-BuildableLabs - Wildcard Generalist
-Engineer
-Time Limit: 48 hours
+```
+The notification system isn't complete. I need:
 
-Assignment: Real-Time Live Event Broadcasting
-System
-Build: A live streaming platform where creators broadcast video, viewers watch with chat,
-and n8n automation handles notifications.
-Quick Version:
-● Phase 1 (Mobile + Backend): Creator streams, viewers watch, chat syncs
-● Phase 2 (Offline): Queue chat locally, sync when online
-● Phase 3 (Automation): n8n notifies followers, detects trends, generates highlights
-What You're Building
-Creator (Mobile App):
-● Start live stream
-● See live viewer count
-● Read viewer chat
-● End stream
-Viewer (Mobile App):
-● Browse streams
-● Join and watch video
-● Send chat messages
-● See viewer count
-Automation (n8n):
-● Stream starts → notify followers
-● Viewer count > 100 → alert creator
-● Stream ends → generate highlights
-● Daily digest of top streams
+1. When User A follows User B, create a notification for User B: type "new_follower", title "User A started following you"
+2. When a creator starts a stream, find all users who follow that creator and create a notification for each: type "stream_started", title "Creator X just went live — join now!"
+3. Viewer milestone notifications are already working via n8n webhooks
 
-Backend:
-● Real-time video + chat sync
-● Concurrent viewer tracking
-● Offline support (queue chat, sync when online)
-
-What to Build
-Phase 1 (Streaming):
-● Creator app: Start/end stream
-● Viewer app: Join, watch video
-● Real-time viewer count
-● Basic chat (messages sync across viewers)
-Phase 2 (Offline):
-● Offline support: Queue chat locally
-● Sync when online: Messages in correct order
-● Conflict handling: Offline edits merged properly
-Phase 3 (Automation):
-● n8n workflows
-● Stream starts → notify followers
-● Viewer count milestones → alerts
-● Stream ends → generate highlights
-● Daily digest
-Submit
-1. GitHub repo (/mobile /backend /n8n-workflow)
-2. Prompt sharing (chat link or doc)
-3. n8n workflow export
-4. App
-make a prompt sharing doc sayung prompt.md  reflecting in all the prompts from the beginning of the build
-</USER_REQUEST>
-<ADDITIONAL_METADATA>
-The current local time is: 2026-07-04T08:58:52+05:30.
-
-The user's current state is as follows:
-Active Document: /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-Cursor is on line: 32
-Other open documents:
-- /Users/ananya/Desktop/buildai/docker-compose.yml (LANGUAGE_YAML)
-- /Users/ananya/Desktop/buildai/README.md (LANGUAGE_MARKDOWN)
-</ADDITIONAL_METADATA>
+The follow notification should be created in the POST /api/users/:id/follow route handler. The stream-start notification should fire in the streams route when transitioning from SCHEDULED to LIVE — query the Follow table for all followers of the creator and batch insert notifications.
 ```
 
+---
+
+## Phase 9 — Offline Pipeline Optimization
+
+### Prompt 31 — Spam Detection on Reconnection Bug
+
+```
+There's a bug: when a user goes offline and queues up messages, then comes back online, the outbox sync sometimes triggers the spam detection rate limiter on the backend. The spam alert dialog pops up which should NOT happen for legitimate offline-queued messages.
+
+The root cause: in useChat.ts sendMessage(), we check isOnline but not whether the Socket.IO connection is actually established. When the device is technically online but the socket hasn't reconnected yet, messages get emitted to a disconnected socket. Socket.IO buffers them and flushes all at once when it reconnects, which hits the rate limiter.
+
+Fix: Check both isOnline AND socketRef.current?.connected before emitting. If either is false, route the message to OutboxService.enqueue() instead of socket.emit(). The outbox sync goes through POST /api/chat/sync which doesn't have rate limiting.
+```
+
+### Prompt 32 — Optimize Chat Sync Pipeline Performance
+
+```
+The ChatService.syncMessages() function in chatService.ts is slow. Currently it loops through each message sequentially with a findUnique + create for each one. For 10 queued messages, that's 20 sequential database roundtrips.
+
+Optimize this:
+1. Extract all clientMessageIds from the incoming array
+2. Do a single findMany query with { clientMessageId: { in: clientMessageIds } } to check which already exist
+3. Build a Map of existing messages
+4. Filter out the already-existing ones
+5. Create all new messages in parallel using Promise.all
+6. Merge the results preserving the original input order
+
+This reduces it from 2N sequential queries to 2 queries (one read, one parallel write batch). Should be dramatically faster for large offline queues.
+```
+
+---
+
+## Phase 10 — Documentation & Submission
+
+### Prompt 33 — README Cleanup
+
+```
+The README has too many emojis and reads like a tutorial. Make it professional and to the point:
+
+1. Remove all emojis
+2. Add clear Mermaid diagrams for:
+   - WebRTC media delivery pipeline (Creator → Backend → LiveKit → Viewer)
+   - Chat synchronization and reconnect recovery flow
+   - n8n webhook automation pipeline
+3. Clearly define the project structure as a tree
+4. List the complete tech stack with specific package names
+5. Separate the features list by assignment phase (Phase 1, 2, 3)
+6. Setup instructions should be copy-paste-able
+7. Testing procedures should be specific and verifiable
+```
+
+### Prompt 34 — Git History Cleanup
+
+```
+Help me commit the changes in a series of clean, logical commits. I want conventional commit messages that tell a story of the build process. Group related files together — don't commit everything in one giant blob.
+
+The commits should be ordered logically:
+1. Infrastructure and config changes first
+2. Backend features  
+3. Mobile app screens
+4. n8n workflow files
+5. Documentation
+```
+
+### Prompt 35 — Submission Checklist
+
+```
+The assignment says I need to submit:
+1. GitHub repo (with /mobile, /backend, /n8n-workflows directories)
+2. Prompt sharing doc (this prompt.md file)
+3. n8n workflow JSON exports
+4. The app
+5. A Loom video (5 minutes)
+
+Questions:
+- For the app — do I need to build an APK/IPA or is running via Expo locally sufficient? I don't want to waste time with EAS Build if I can just demo it running locally.
+- For the Loom video — what should I show? I'm thinking: quick architecture overview, then demo the creator flow (go live, see viewers, see chat), then the viewer flow, then the offline flow (toggle airplane mode, queue messages, come back online), then show n8n workflow executions.
+- For prompt sharing — should I clean up the raw prompts into something readable or just dump the conversation?
+
+```
